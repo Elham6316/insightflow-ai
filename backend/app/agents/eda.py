@@ -1,3 +1,4 @@
+import calendar
 import re
 from pathlib import Path
 
@@ -11,6 +12,7 @@ _DATE_NAME_RE = re.compile(r"date|time|_dt$|timestamp|created|updated", re.IGNOR
 _MIN_ROWS_FOR_TRENDS = 2
 _MIN_DATE_PARSE_RATE = 0.8
 _TOP_N_CATEGORIES = 5
+_INCOMPLETE_PERIOD_DAY_THRESHOLD = 3  # days before month-end; simple heuristic, not exact
 
 
 class EDAResults(BaseModel):
@@ -101,11 +103,31 @@ def _trends(df: pd.DataFrame) -> tuple[dict, str | None]:
 
         data = []
         for period, group in grouped:
-            row = {"period": str(period), "count": int(len(group))}
+            row = {
+                "period": str(period),
+                "count": int(len(group)),
+                "incomplete_period": False,
+                "note": None,
+            }
             for col in numeric_cols:
                 row[f"sum_{col}"] = _clean(group[col].sum())
             data.append(row)
         data.sort(key=lambda r: r["period"])
+
+        max_date = parsed.max()
+        if pd.notna(max_date):
+            last_period = str(max_date.to_period("M"))
+            days_in_month = calendar.monthrange(max_date.year, max_date.month)[1]
+            if (days_in_month - max_date.day) > _INCOMPLETE_PERIOD_DAY_THRESHOLD:
+                for row in data:
+                    if row["period"] == last_period:
+                        row["incomplete_period"] = True
+                        row["note"] = (
+                            f"This period only contains data through "
+                            f"{max_date.strftime('%b %d')} and may not be "
+                            f"representative of a full month."
+                        )
+                        break
     except Exception as exc:  # noqa: BLE001
         return {}, f"Could not compute trends: {exc}"
 
