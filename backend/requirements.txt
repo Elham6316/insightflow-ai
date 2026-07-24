@@ -6,6 +6,7 @@ psycopg2-binary
 pydantic-settings
 pandas
 openpyxl
+xlrd
 duckdb
 python-multipart
 langgraph

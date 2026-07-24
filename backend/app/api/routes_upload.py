@@ -11,7 +11,7 @@ from app.services.data_loader import load_and_profile
 router = APIRouter()
 
 UPLOAD_DIR = Path("uploads")
-ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
+ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
 
 
 @router.post("/upload")
@@ -30,7 +30,13 @@ async def upload_dataset(file: UploadFile, db: Session = Depends(get_db)):
     with open(file_path, "wb") as out:
         out.write(await file.read())
 
-    profile = load_and_profile(str(file_path))
+    try:
+        profile = load_and_profile(str(file_path))
+    except Exception as exc:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400, detail=f"Could not read the file: {exc}"
+        ) from exc
 
     dataset = Dataset(
         filename=file.filename,
