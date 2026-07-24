@@ -134,10 +134,166 @@ The migration also runs `CREATE EXTENSION IF NOT EXISTS pgcrypto` so
   and mocked edge cases (malformed JSON fallback, fenced JSON extraction,
   unsupported file extensions).
 
-## Known Gaps / TODO for Phase 2
+## Phase 2: Core Analysis Pipeline
 
-- Planner output (`data_domain`, `has_time_series`, `reasoning`,
-  `agents_to_run`) is not yet persisted back to the `datasets` table.
+### Agents Built
+
+- **`DataQualityAgent`** (`app/agents/data_quality.py`): pure pandas/numpy
+  computation, no LLM involved in the calculations themselves. Computes
+  `missing_by_column` (`% missing per column, df.isnull().mean() * 100`),
+  `duplicates` (`df.duplicated().sum()`), `type_issues` (object/string
+  columns where ≥80% of non-null values match a numeric-looking regex —
+  `NUMERIC_LOOKING_THRESHOLD = 0.8`), and `outliers` (per numeric column,
+  values outside `[Q1 - 1.5*IQR, Q3 + 1.5*IQR]`). `overall_score` is a
+  weighted penalty formula (see `_overall_score()`):
+  `100 - (0.4 * missing_pct + 0.3 * duplicate_pct + 0.3 * outlier_pct)`,
+  clipped to `[0, 100]` — missing values weighted highest (0.4) since they
+  most directly block analysis, duplicates and outliers weighted equally
+  (0.3 each). The LLM (`_get_summary()`) is used *only* to turn the already
+  computed `stats` dict into a 2-3 sentence human-readable summary — it
+  never receives raw data and never influences the numbers.
+- **`EDAAgent`** (`app/agents/eda.py`): pure pandas, no LLM, no duckdb (not
+  needed — pandas covered every requested computation). Computes
+  `distributions` (`describe()` per numeric column), `correlations`
+  (`.corr()` on numeric columns as a nested dict), `trends` (monthly
+  sum/count aggregation when a date/time column is found — see "Known
+  Limitation" below), and `categorical_summary` (top 5 value counts per
+  object/string column). Every section degrades to `{}` plus a
+  `<section>_note` explaining why (e.g. "No numeric columns found in this
+  dataset.") instead of raising, when the relevant data is missing or
+  insufficient.
+- **`InsightAgent`** (`app/agents/insight.py`): the prompt (`_PROMPT_TEMPLATE`)
+  embeds two few-shot examples — a BAD example ("Revenue was $50,000 in the
+  top region.") and a GOOD example ("Riyadh generated 45% of total revenue
+  despite having only 30% of transactions...") — to steer the LLM toward
+  causal, explanatory insights instead of restated numbers. Output is
+  validated with `InsightList`, whose `insights` field uses
+  `Field(min_length=3, max_length=6)` — this Pydantic constraint itself is
+  what rejects a too-short response as a `ValidationError`, feeding the same
+  retry-once-then-fallback loop used by `PlannerAgent`. The fallback
+  (`_fallback_insights()`) builds exactly 3 insights directly from
+  `eda_results`/`quality_report` (a quality-score overview, a numeric-range
+  highlight, and a categorical/trend highlight), never inventing numbers.
+
+### Design Pattern: Retry + Fallback for LLM Calls
+
+All three LLM-calling agents — `PlannerAgent`, `DataQualityAgent`'s summary
+step, and `InsightAgent` — follow the same pattern: call the LLM, validate
+the response with a Pydantic model, retry once on failure (malformed JSON,
+schema validation failure, or empty response), then fall back to a safe
+template-based default rather than crashing the pipeline. This was a
+deliberate consistency decision so every agent behaves predictably under LLM
+failure, rather than each agent inventing its own error-handling approach.
+
+### Known Limitation Found & Fixed: Misleading Trend Comparisons
+
+**Issue:** `InsightAgent`, run against `sample_sales_fixed.csv` (data through
+Feb 10 only), initially generated an insight along the lines of "Significant
+Decline in Monthly Transaction Volume," directly comparing January's 11
+orders to February's 4 — treating a complete month against a partial one as
+if the drop were a real trend. The LLM had no way to know February only had
+10 days of data, because that information wasn't in what it was given.
+
+**Fix:** `EDAAgent._trends()` (`app/agents/eda.py`) now finds the dataset's
+max date, computes days-in-month via `calendar.monthrange()`, and flags the
+period containing that max date as `"incomplete_period": true` (with a
+human-readable `"note"`) whenever the max date falls more than
+`_INCOMPLETE_PERIOD_DAY_THRESHOLD = 3` days short of month-end — a simple,
+intentionally inexact heuristic. `InsightAgent`'s prompt was updated with an
+explicit "INCOMPLETE TIME PERIODS" instruction telling the LLM not to treat
+a comparison involving a flagged period as a definitive trend, and to either
+avoid it or explicitly caveat it as partial. Re-running against the same
+fixture, the misleading insight was replaced by one titled "Incomplete Data
+for February 2025" / "Incomplete reporting for February," which explicitly
+states the Jan-vs-Feb comparison "would be mathematically unsound without
+normalizing for the shortened timeframe."
+
+**Broader lesson:** LLM-generated causal insights can be numerically
+accurate but contextually misleading when the underlying data has gaps the
+LLM isn't explicitly told about. This was only checked and fixed for the
+time-series/`trends` case so far — the same class of problem (grounded but
+misleading due to an un-flagged data gap) should be checked for other agents
+and domains as they're added later, not assumed solved everywhere.
+
+### Orchestration
+
+`app/orchestrator/graph.py` builds a LangGraph `StateGraph` over
+`AnalysisState` (`app/orchestrator/state.py`) with a linear pipeline:
+`planner -> data_quality -> eda -> insight -> END`. There are no conditional
+edges yet — every run executes all four agents in the same fixed order; a
+Reviewer node with conditional routing is planned for a later phase, not
+this one.
+
+Error-continuation behavior: `BaseAgent.run()` (`app/agents/base.py`)
+already catches agent exceptions internally and writes them to
+`state["errors"]` rather than raising, so the graph naturally continues to
+the next node even if one agent fails. `_make_node()` additionally
+diffs `state["errors"]` before/after each node and logs a warning when a
+node adds new errors, plus wraps `agent.run()` in a last-resort
+`try/except` as defense against failures outside the agent's own guard.
+`run_analysis()` sets the final `state["status"]` to `"done_with_errors"`
+instead of `"done"` when `state["errors"]` is non-empty. This was explicitly
+tested by mocking `DataQualityAgent.execute` to raise: the graph logged a
+warning, continued to `eda`, and the final status was correctly
+`"done_with_errors"`.
+
+### API Endpoints Added
+
+Both in `app/api/routes_analysis.py`, wired into `app/main.py`:
+
+- **`POST /analysis/{dataset_id}/run`**: looks up the `datasets` row (404 if
+  missing), profiles the file via `load_and_profile`, inserts an
+  `analysis_runs` row (`status="running"`), runs the full graph, then writes
+  one `agent_outputs` row per agent (`planner` → `planner_output`,
+  `data_quality` → `quality_report`, `eda` → `eda_results`, `insight` →
+  `{"insights": [...]}`), with each row's `status` set to `"failed"` if that
+  agent name appears in `state["errors"]`, else `"success"`. Each generated
+  insight is written to the `insights` table, with `related_metric` stored
+  in the `chart_ref` column (repurposing it for its stated future use —
+  "for later chart linking" — since no dedicated chart-reference data exists
+  yet). Updates the `analysis_runs` row's `status`, `current_agent`, and
+  `finished_at`, and returns `{"run_id": ..., "final_state": ...}`, plus a
+  `"note"` field when `status == "done_with_errors"`.
+- **`GET /analysis/{run_id}`**: 404 if the run doesn't exist, otherwise
+  returns the `analysis_runs` row plus its related `agent_outputs` and
+  `insights` rows (queried directly, not via lazy relationship access), with
+  the same `"note"` field when applicable. Note: `agent_outputs.duration_ms`
+  is currently always `null` — `BaseAgent.run()` times each agent
+  internally but doesn't thread that duration back into `state`, so nothing
+  populates this column yet.
+
+### Testing Approach
+
+- **`tests/test_eda_agent.py`** and **`tests/test_orchestrator_graph.py`**:
+  pytest tests (using `pytest-asyncio`) against `sample_sales_fixed.csv`,
+  covering `EDAAgent` in isolation and the full
+  `planner -> data_quality -> eda -> insight` graph end-to-end.
+- **`tests/manual_test_insight.py`**: a manual (non-pytest, no assertions)
+  script that runs `DataQualityAgent -> EDAAgent -> InsightAgent` against
+  `sample_sales_fixed.csv` and pretty-prints the generated insights, for
+  fast by-eye iteration on prompt/insight quality. Note: there is currently
+  no equivalent `manual_test_data_quality.py` — only `manual_test_insight.py`
+  exists; `DataQualityAgent` was iterated on with ad-hoc inline scripts
+  during development rather than a saved manual test script.
+- The full pipeline was also verified live against the real Supabase
+  database via `POST /analysis/{dataset_id}/run` and
+  `GET /analysis/{run_id}` (through a locally running `uvicorn` instance),
+  confirming real rows landed correctly in `analysis_runs`, `agent_outputs`,
+  and `insights`. That test data was cleaned up afterward by deleting the
+  `datasets` row, which cascades (`ON DELETE CASCADE`) through
+  `analysis_runs` to `agent_outputs` and `insights`.
+
+## Known Gaps / TODO for Phase 3
+
+- `datasets.domain` is still always `NULL` after upload — neither
+  `POST /upload` nor `POST /analysis/{dataset_id}/run` writes
+  `state["data_domain"]` back to the `datasets` row; it only ever lives in
+  `state`/`agent_outputs`/the API response.
 - RLS is not yet configured on any table.
-- No orchestrator/graph exists yet to wire agents together into a full run
-  (`app/orchestrator/` is currently an empty package).
+- The orchestrator graph is linear with no conditional edges — a Reviewer
+  node (and any branching logic) is not built yet.
+- `agent_outputs.duration_ms` is never populated (see API Endpoints Added
+  above).
+- The "incomplete period" fix only covers the EDA `trends` section; whether
+  other agents can produce numerically-accurate-but-misleading output due to
+  un-flagged data gaps hasn't been audited.
