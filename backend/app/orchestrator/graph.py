@@ -1,0 +1,74 @@
+import logging
+
+from langgraph.graph import END, START, StateGraph
+
+from app.agents.base import BaseAgent
+from app.agents.data_quality import DataQualityAgent
+from app.agents.eda import EDAAgent
+from app.agents.planner import PlannerAgent
+from app.orchestrator.state import AnalysisState
+
+logger = logging.getLogger(__name__)
+
+
+def _make_node(agent: BaseAgent):
+    """Wrap an agent into a LangGraph node.
+
+    BaseAgent.run() already catches agent exceptions internally and records
+    them in state["errors"] rather than raising, so the graph continues to
+    the next node on its own. This wrapper adds the explicit
+    warn-and-continue behavior at the orchestrator level, and defends
+    against anything unexpected (e.g. a bug outside the agent's own guard)
+    so a single node can never halt the whole graph.
+    """
+
+    async def node(state: AnalysisState) -> AnalysisState:
+        state["current_agent"] = agent.name
+        errors_before = len(state.get("errors") or [])
+
+        try:
+            state = await agent.run(state)
+        except Exception as exc:  # noqa: BLE001 - last-resort guard, node must not halt the graph
+            logger.warning(
+                "orchestrator: node %s raised unexpectedly, continuing: %s",
+                agent.name,
+                exc,
+            )
+            state.setdefault("errors", []).append(
+                {"agent": agent.name, "error": str(exc)}
+            )
+
+        errors_after = state.get("errors") or []
+        if len(errors_after) > errors_before:
+            logger.warning(
+                "orchestrator: node %s recorded error(s), continuing to next node: %s",
+                agent.name,
+                errors_after[errors_before:],
+            )
+
+        return state
+
+    return node
+
+
+def build_graph():
+    graph = StateGraph(AnalysisState)
+
+    graph.add_node("planner", _make_node(PlannerAgent()))
+    graph.add_node("data_quality", _make_node(DataQualityAgent()))
+    graph.add_node("eda", _make_node(EDAAgent()))
+
+    graph.add_edge(START, "planner")
+    graph.add_edge("planner", "data_quality")
+    graph.add_edge("data_quality", "eda")
+    graph.add_edge("eda", END)
+
+    return graph.compile()
+
+
+async def run_analysis(initial_state: AnalysisState) -> AnalysisState:
+    app = build_graph()
+    initial_state.setdefault("status", "running")
+    final_state = await app.ainvoke(initial_state)
+    final_state["status"] = "done" if not final_state.get("errors") else "done_with_errors"
+    return final_state
