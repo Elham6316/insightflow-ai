@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+alembic
+psycopg2-binary
+pydantic-settings
+pandas
+duckdb
+python-multipart
+google-genai
+truststore
