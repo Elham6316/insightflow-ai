@@ -19,8 +19,11 @@ class AnalysisState(TypedDict, total=False):
     # written by EDAAgent (app/agents/eda.py)
     eda_results: dict[str, Any]
 
-    # written by future InsightAgent
+    # written by InsightAgent (app/agents/insight.py)
     insights: list[dict[str, Any]]
+
+    # written by VisualizationAgent (app/agents/visualization.py)
+    visualizations: list[dict[str, Any]]
 
     # written by BaseAgent.run() on any agent failure (app/agents/base.py)
     errors: list[dict[str, Any]]
