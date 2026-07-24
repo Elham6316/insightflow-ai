@@ -25,6 +25,9 @@ env/
 .ruff_cache/
 *.egg
 
+# Uploads
+uploads/
+
 # Environment
 .env
 .env.local

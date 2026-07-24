@@ -5,6 +5,7 @@ alembic
 psycopg2-binary
 pydantic-settings
 pandas
+openpyxl
 duckdb
 python-multipart
 google-genai
