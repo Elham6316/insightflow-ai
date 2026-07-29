@@ -6,6 +6,7 @@ from app.agents.base import BaseAgent
 from app.agents.data_quality import DataQualityAgent
 from app.agents.eda import EDAAgent
 from app.agents.insight import InsightAgent
+from app.agents.kpi import KpiAgent
 from app.agents.planner import PlannerAgent
 from app.agents.visualization import VisualizationAgent
 from app.orchestrator.state import AnalysisState
@@ -59,13 +60,15 @@ def build_graph():
     graph.add_node("planner", _make_node(PlannerAgent()))
     graph.add_node("data_quality", _make_node(DataQualityAgent()))
     graph.add_node("eda", _make_node(EDAAgent()))
+    graph.add_node("kpi", _make_node(KpiAgent()))
     graph.add_node("insight", _make_node(InsightAgent()))
     graph.add_node("visualization", _make_node(VisualizationAgent()))
 
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "data_quality")
     graph.add_edge("data_quality", "eda")
-    graph.add_edge("eda", "insight")
+    graph.add_edge("eda", "kpi")
+    graph.add_edge("kpi", "insight")
     graph.add_edge("insight", "visualization")
     graph.add_edge("visualization", END)
 

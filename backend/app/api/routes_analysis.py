@@ -12,12 +12,18 @@ from app.services.data_loader import load_and_profile
 router = APIRouter()
 
 # Which piece of the final state each agent's row in agent_outputs should
-# store. InsightAgent's output is wrapped since state["insights"] is a bare
-# list, not a dict, and `output` is a JSONB column.
+# store. InsightAgent's, KpiAgent's and VisualizationAgent's outputs are
+# wrapped since state["insights"]/state["kpis"]/state["visualizations"] are
+# bare lists, not dicts, and `output` is a JSONB column.
 _AGENT_OUTPUT_FIELDS = {
     "planner": "planner_output",
     "data_quality": "quality_report",
     "eda": "eda_results",
+}
+_LIST_AGENT_OUTPUT_FIELDS = {
+    "kpi": "kpis",
+    "insight": "insights",
+    "visualization": "visualizations",
 }
 
 
@@ -63,14 +69,15 @@ async def run_dataset_analysis(dataset_id: str, db: Session = Depends(get_db)):
                 status=_agent_status(agent_name, errors),
             )
         )
-    db.add(
-        AgentOutput(
-            run_id=run.id,
-            agent_name="insight",
-            output={"insights": final_state.get("insights") or []},
-            status=_agent_status("insight", errors),
+    for agent_name, state_key in _LIST_AGENT_OUTPUT_FIELDS.items():
+        db.add(
+            AgentOutput(
+                run_id=run.id,
+                agent_name=agent_name,
+                output={state_key: final_state.get(state_key) or []},
+                status=_agent_status(agent_name, errors),
+            )
         )
-    )
 
     for insight in final_state.get("insights") or []:
         db.add(
@@ -104,6 +111,8 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
     if run is None:
         raise HTTPException(status_code=404, detail="Analysis run not found")
 
+    dataset = db.get(Dataset, run.dataset_id)
+
     agent_outputs = (
         db.query(AgentOutput)
         .filter(AgentOutput.run_id == run.id)
@@ -117,13 +126,26 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
         .all()
     )
 
+    outputs_by_agent = {ao.agent_name: ao.output for ao in agent_outputs}
+    planner_output = outputs_by_agent.get("planner") or {}
+    quality_report = outputs_by_agent.get("data_quality") or {}
+    visualizations = (outputs_by_agent.get("visualization") or {}).get(
+        "visualizations", []
+    )
+    kpis = (outputs_by_agent.get("kpi") or {}).get("kpis", [])
+
     response = {
         "run_id": str(run.id),
         "dataset_id": str(run.dataset_id),
+        "dataset_filename": dataset.filename if dataset else None,
         "status": run.status,
         "current_agent": run.current_agent,
         "started_at": run.started_at,
         "finished_at": run.finished_at,
+        "data_domain": planner_output.get("data_domain"),
+        "quality_report": quality_report,
+        "kpis": kpis,
+        "visualizations": visualizations,
         "agent_outputs": [
             {
                 "id": str(ao.id),

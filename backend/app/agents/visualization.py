@@ -45,10 +45,7 @@ def _line_chart_from_trends(trends: dict) -> dict | None:
 
     title = f"{_title_case(primary_col)} Trend by Month"
     option = {
-        "title": {
-            "text": title,
-            **({"subtext": " ".join(incomplete_notes)} if incomplete_notes else {}),
-        },
+        "title": {"text": title},
         "tooltip": {"trigger": "axis"},
         "xAxis": {"type": "category", "data": periods},
         "yAxis": {"type": "value"},
@@ -60,6 +57,10 @@ def _line_chart_from_trends(trends: dict) -> dict | None:
         "title": title,
         "echarts_option": option,
         "related_metric": f"trends.sum_{primary_col}",
+        # Rendered by the frontend as a caption below the chart, not inside
+        # the ECharts option — putting it in title.subtext overlapped the
+        # chart title itself.
+        "note": " ".join(incomplete_notes) if incomplete_notes else None,
     }
 
 
@@ -68,26 +69,62 @@ def _heatmap_from_correlations(correlations: dict) -> dict | None:
         return None
 
     cols = list(correlations.keys())
+    # Round to 2 decimals so cell labels ("0.81" vs "0.8123961052053926")
+    # stay short enough not to collide with each other or the axis labels.
     data = []
     for row_idx, row_col in enumerate(cols):
         for col_idx, col_col in enumerate(cols):
             value = correlations[row_col].get(col_col)
-            data.append([col_idx, row_idx, value if value is not None else "-"])
+            rounded = round(value, 2) if value is not None else None
+            data.append([col_idx, row_idx, rounded if rounded is not None else "-"])
+
+    rotate_labels = 30 if len(cols) > 4 else 0
 
     title = "Correlation Heatmap"
     option = {
-        "title": {"text": title},
+        # No internal ECharts title here — the dashboard already shows the
+        # chart's title via the surrounding Card's own title. Previously we
+        # set both, and the visualMap legend's bar (itemWidth/itemHeight were
+        # swapped, producing an 80-unit-tall bar instead of a thin 12-unit
+        # one) rendered directly on top of this internal title, which is
+        # exactly the "blue bar over the title" artifact.
         "tooltip": {"position": "top"},
-        "xAxis": {"type": "category", "data": cols},
-        "yAxis": {"type": "category", "data": cols},
+        # Extra grid padding gives the rotated/long column-name labels and
+        # the visualMap legend room so they don't overlap the cells.
+        "grid": {"top": 60, "bottom": 50, "left": 90, "right": 20, "containLabel": True},
+        "xAxis": {
+            "type": "category",
+            "data": cols,
+            "splitArea": {"show": True},
+            "axisLabel": {"fontSize": 10, "interval": 0, "rotate": rotate_labels},
+        },
+        "yAxis": {
+            "type": "category",
+            "data": cols,
+            "splitArea": {"show": True},
+            "axisLabel": {"fontSize": 10},
+        },
         "visualMap": {
             "min": -1,
             "max": 1,
             "calculable": True,
             "orient": "horizontal",
             "left": "center",
+            "top": 5,
+            # For a horizontal bar, itemWidth is its length and itemHeight is
+            # its thickness — these were swapped before.
+            "itemWidth": 100,
+            "itemHeight": 12,
+            "textStyle": {"fontSize": 10},
         },
-        "series": [{"name": "Correlation", "type": "heatmap", "data": data, "label": {"show": True}}],
+        "series": [
+            {
+                "name": "Correlation",
+                "type": "heatmap",
+                "data": data,
+                "label": {"show": True, "fontSize": 10},
+            }
+        ],
     }
 
     return {
@@ -95,6 +132,7 @@ def _heatmap_from_correlations(correlations: dict) -> dict | None:
         "title": title,
         "echarts_option": option,
         "related_metric": "correlations",
+        "note": None,
     }
 
 
@@ -113,6 +151,7 @@ def _bar_chart_from_categorical(col: str, counts: dict) -> dict:
         "title": title,
         "echarts_option": option,
         "related_metric": f"categorical_summary.{col}",
+        "note": None,
     }
 
 
@@ -136,6 +175,7 @@ def _pie_chart_from_categorical(col: str, counts: dict) -> dict:
         "title": title,
         "echarts_option": option,
         "related_metric": f"categorical_summary.{col}",
+        "note": None,
     }
 
 
@@ -173,11 +213,22 @@ def _find_matching_insight_title(related_metric: str, insights: list[dict]) -> s
 
 
 def _apply_insight_titles(charts: list[dict], insights: list[dict]) -> None:
+    # An insight can fuzzy-match more than one chart (e.g. a bare
+    # "categorical_summary" related_metric matches every categorical chart).
+    # Only the first chart that matches a given insight title gets it, so we
+    # never render the same title on two different charts; later charts keep
+    # their generated default title instead.
+    used_titles: set[str] = set()
     for chart in charts:
         matched_title = _find_matching_insight_title(chart["related_metric"], insights)
-        if matched_title:
+        if matched_title and matched_title not in used_titles:
             chart["title"] = matched_title
-            chart["echarts_option"]["title"]["text"] = matched_title
+            # Not every chart has an internal ECharts title (the heatmap
+            # deliberately doesn't, to avoid colliding with its visualMap
+            # legend) — only update it if present.
+            if "title" in chart["echarts_option"]:
+                chart["echarts_option"]["title"]["text"] = matched_title
+            used_titles.add(matched_title)
 
 
 class VisualizationAgent(BaseAgent):

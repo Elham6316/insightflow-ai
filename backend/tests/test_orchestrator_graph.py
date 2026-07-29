@@ -41,6 +41,12 @@ async def test_full_graph_upload_through_visualization():
     assert final_state["eda_results"]["distributions"]
     assert final_state["eda_results"]["trends"]
 
+    assert final_state.get("kpis")
+    assert len(final_state["kpis"]) == 4
+    for kpi in final_state["kpis"]:
+        assert kpi["label"]
+        assert kpi["format"] in {"currency", "number", "percent"}
+
     assert final_state.get("insights")
     assert 3 <= len(final_state["insights"]) <= 6
 

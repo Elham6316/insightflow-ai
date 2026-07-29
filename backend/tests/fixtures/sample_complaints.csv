@@ -1,0 +1,16 @@
+complaint_id,date,category,priority,resolution_days,status,customer_name
+2001,2025-03-01,Billing,High,3,Resolved,Ahmed Al-Salem
+2002,2025-03-02,Shipping,Medium,5,Resolved,Sara Al-Qahtani
+2003,2025-03-03,Product Defect,High,7,Resolved,Mohammed Al-Otaibi
+2004,2025-03-05,Customer Service,Low,1,Resolved,Fatima Al-Harbi
+2005,2025-03-06,Billing,Medium,4,Resolved,
+2006,2025-03-08,Shipping,High,10,Open,Khalid Al-Dosari
+2007,2025-03-10,Billing,Low,2,Resolved,Noura Al-Ghamdi
+2008,2025-03-12,Product Defect,Medium,6,Resolved,Abdullah Al-Shehri
+2009,2025-03-14,Customer Service,High,8,Open,Layla Al-Zahrani
+2010,2025-03-16,Billing,Medium,3,Resolved,Omar Al-Malki
+2011,2025-03-18,Shipping,Low,,Open,Huda Al-Amri
+2012,2025-03-20,Billing,High,5,Resolved,Yousef Al-Harthi
+2013,2025-03-22,Product Defect,Medium,9,Resolved,Reem Al-Subaie
+2014,2025-03-24,Billing,Low,2,Resolved,Faisal Al-Rashidi
+2015,2025-03-26,Customer Service,Medium,4,Resolved,Amal Al-Anzi

@@ -19,6 +19,9 @@ class AnalysisState(TypedDict, total=False):
     # written by EDAAgent (app/agents/eda.py)
     eda_results: dict[str, Any]
 
+    # written by KpiAgent (app/agents/kpi.py)
+    kpis: list[dict[str, Any]]
+
     # written by InsightAgent (app/agents/insight.py)
     insights: list[dict[str, Any]]
 
