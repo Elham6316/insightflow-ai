@@ -107,7 +107,14 @@ def _heatmap_from_correlations(correlations: dict) -> dict | None:
         "visualMap": {
             "min": -1,
             "max": 1,
-            "calculable": True,
+            # calculable=True renders draggable range-filter "handle" thumbs
+            # (pill/pin-shaped) on the bar, for letting a user drag to filter
+            # the value range. We don't want that interaction on a static
+            # correlation legend — those handles were the actual "blue
+            # pill/capsule" artifact, confirmed via DOM/pixel inspection
+            # (nothing in the DOM at that location besides canvas — i.e. it
+            # was painted by ECharts itself, not a stray CSS/HTML element).
+            "calculable": False,
             "orient": "horizontal",
             "left": "center",
             "top": 5,
