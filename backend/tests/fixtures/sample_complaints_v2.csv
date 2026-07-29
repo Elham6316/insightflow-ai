@@ -1,0 +1,16 @@
+complaint_id,date,category,priority,status,resolution_days,customer_region,agent_name
+C001,2025-01-03,Billing,High,Resolved,2,Riyadh,Ahmed
+C002,2025-01-05,Technical,Medium,Resolved,5,Jeddah,Sara
+C003,2025-01-07,Service Quality,Low,Resolved,1,Riyadh,Mohammed
+C004,2025-01-10,Billing,High,Open,,Dammam,Fatima
+C005,2025-01-12,Technical,Critical,Resolved,7,Riyadh,Ahmed
+C006,2025-01-15,Delivery,Medium,Resolved,3,Jeddah,Khalid
+C007,2025-01-18,Billing,Low,Resolved,1,Riyadh,Sara
+C008,2025-01-20,Service Quality,Medium,Open,,Dammam,Mohammed
+C009,2025-01-22,Technical,High,Resolved,4,Jeddah,Ahmed
+C010,2025-01-25,Delivery,Low,Resolved,2,Riyadh,Fatima
+C011,2025-01-28,Billing,Medium,Resolved,3,Jeddah,Khalid
+C012,2025-02-02,Technical,High,Resolved,6,Riyadh,Sara
+C013,2025-02-05,Service Quality,Critical,Resolved,8,Dammam,Ahmed
+C014,2025-02-08,Delivery,Medium,Open,,Riyadh,Mohammed
+C015,2025-02-10,Billing,Low,Resolved,1,Jeddah,Fatima
