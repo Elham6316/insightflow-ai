@@ -283,6 +283,77 @@ Both in `app/api/routes_analysis.py`, wired into `app/main.py`:
   `datasets` row, which cascades (`ON DELETE CASCADE`) through
   `analysis_runs` to `agent_outputs` and `insights`.
 
+## Known Issues
+
+### RESOLVED: Blue pill/capsule artifact on the correlation heatmap
+
+**Symptom:** a solid blue pill/capsule-shaped region rendered near the top
+of the correlation heatmap chart in the dashboard (`app/agents/
+visualization.py`'s `_heatmap_from_correlations()`, rendered client-side via
+`frontend/components/echart.tsx`), overlapping the chart title. It persisted
+across page refreshes, hard refreshes, and backend restarts, and survived
+two earlier fix attempts, so it took three separate rounds of DOM/canvas
+inspection to isolate correctly.
+
+**Root cause:** the shape was the ECharts `visualMap` component — the
+color-scale legend bar for the heatmap — rendering as a solid filled shape
+rather than the thin gradient strip it was meant to be. It was confirmed via
+live DOM inspection (`document.elementsFromPoint()` at the shape's screen
+location returned only the chart's own `<canvas>` layers, no separate HTML/
+CSS element) and canvas pixel analysis (a concentrated, single-dominant-
+color blob, present immediately on page load before any mouse interaction
+had ever occurred, non-blinking, and unaffected by hovering over the chart
+or moving the mouse away).
+
+**Initial attempts that were wrong, and why they seemed plausible:**
+1. `visualMap.calculable = False` (commit `f1ca559`) — `calculable=True`
+   makes ECharts draw draggable range-filter "handle" thumbs (pill-shaped)
+   on the legend bar; this was a real, verified bug (confirmed via before/
+   after pixel comparison) and a legitimate fix, but it wasn't the shape
+   still being reported afterward.
+2. `axisPointer: {"show": False}` at the option, `xAxis`, and `yAxis`
+   levels (bundled into commit `41faf96`) — ruled out on architectural
+   grounds: `axisPointer` is a hover-triggered overlay ECharts only ever
+   draws in response to a `mousemove` event, but the shape was present
+   before any mouse event had ever fired on the page, which is impossible
+   for an `axisPointer`.
+
+**Actual fix (commit `41faf96`):** `visualMap.show` set to `False`. `min`/
+`max` (the color-mapping range) are kept, so cell background colors and
+tooltips are unaffected — only the visible legend bar itself is hidden.
+Verified via a fresh end-to-end run: heatmap cells still render correct
+colors/values (confirmed via per-canvas-layer pixel counts), the legend's
+render layer is empty (`0` colored pixels) before/during/after simulated
+hover, and the rest of the dashboard (KPIs, insights, other charts) is
+unaffected.
+
+**Lesson:** this took three rounds because three different ECharts
+components — the `visualMap` legend's interactive drag-handles, the
+`axisPointer` hover crosshair/shadow, and the `visualMap` legend bar itself
+— can all render as visually similar small blue shapes near a chart's edge,
+despite being entirely separate components with separate config keys and
+separate root causes. What actually worked was not reasoning from
+appearance, but isolating the exact component by disabling one candidate at
+a time and re-verifying with fresh DOM/pixel inspection after each change —
+in particular, checking whether the shape existed *before any interaction*
+was the single fact that ruled out `axisPointer` conclusively.
+
+## Visual Identity Vision
+
+**Insight Stream as the product's signature motion system.** The motion
+language defined in `frontend/lib/motion.ts` (the `Organize` / `Merge` /
+`Flow` / `Connect` / `Reveal` primitives, and the node-and-edge "Insight
+Stream" visual it powers) is intended to become InsightFlow's consistent
+visual identity, not a one-off homepage decoration. The target is to reuse
+the same motion primitives and visual vocabulary (thin full-saturation
+lines, small solid nodes, orderly connection) across: the homepage hero, the
+upload experience, loading states, empty states, success states, dashboard
+transitions, and AI-processing indicators (e.g. while an agent is running).
+
+This is the target for the follow-up phase once the homepage foundation
+(design tokens + the Insight Stream hero component) is built and confirmed
+— it is not yet implemented beyond the homepage scope.
+
 ## Known Gaps / TODO for Phase 3
 
 - `datasets.domain` is still always `NULL` after upload — neither

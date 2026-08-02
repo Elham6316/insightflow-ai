@@ -2,24 +2,24 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Card({
-  className,
-  size = "default",
-  ...props
-}: React.ComponentProps<"div"> & { size?: "default" | "sm" }) {
+const Card = React.forwardRef<
+  HTMLDivElement,
+  React.ComponentProps<"div"> & { size?: "default" | "sm" }
+>(function Card({ className, size = "default", ...props }, ref) {
   return (
     <div
+      ref={ref}
       data-slot="card"
       data-size={size}
       className={cn(
-        "flex flex-col gap-4 overflow-hidden rounded-xl bg-card py-4 text-sm text-card-foreground ring-1 ring-foreground/10",
+        "flex flex-col gap-4 overflow-hidden rounded-card border border-border bg-card py-4 text-sm text-card-foreground shadow-soft",
         size === "sm" && "gap-3 py-3",
         className
       )}
       {...props}
     />
   )
-}
+})
 
 function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
@@ -69,7 +69,7 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-footer"
-      className={cn("flex items-center rounded-b-xl border-t bg-muted/50 p-4", className)}
+      className={cn("flex items-center rounded-b-card border-t border-border/50 bg-muted/50 p-4", className)}
       {...props}
     />
   )

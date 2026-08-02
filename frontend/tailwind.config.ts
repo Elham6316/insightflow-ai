@@ -10,6 +10,16 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        // InsightFlow AI brand palette — use these directly (bg-coastal-blue,
+        // text-ocean-navy, etc.) for anything that should carry brand color
+        // rather than a semantic token below.
+        "meadow-green": "#A8E6CF",
+        "sunlight-yellow": "#FFD369",
+        "coastal-blue": "#3490DC",
+        "ocean-navy": "#1C3B61",
+        "soft-sand": "#F7F9FC",
+        "cloud-grey": "#E2E8F0",
+        label: "var(--label)",
         border: "var(--border)",
         input: "var(--input)",
         ring: "var(--ring)",
@@ -65,6 +75,25 @@ const config: Config = {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+        // Structured Calm radius scale — one role per structural type,
+        // used instead of ad-hoc rounded-xl/2xl per component.
+        page: "var(--radius-page)",
+        section: "var(--radius-section)",
+        dialog: "var(--radius-dialog)",
+        card: "var(--radius-card)",
+        input: "var(--radius-input)",
+        button: "var(--radius-button)",
+        mark: "var(--radius-mark)",
+      },
+      fontFamily: {
+        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "var(--font-sans)", "system-ui", "sans-serif"],
+        mono: ["var(--font-mono)", "monospace"],
+      },
+      boxShadow: {
+        // The only shadow in the system — depth comes from spacing and a
+        // thin border first, this second. No heavy elevation shadows.
+        soft: "var(--shadow-soft)",
       },
     },
   },

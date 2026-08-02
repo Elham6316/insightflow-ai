@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import gsap from "gsap";
 import {
   AlertTriangle,
   BarChart3,
@@ -20,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EChart } from "@/components/echart";
+import { animateCardIn, animateCountUp, animateHoverReveal, animateInsightMoment } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -75,34 +77,28 @@ type AnalysisRunResponse = {
 
 type LoadState = "loading" | "loaded" | "error";
 
-const SEVERITY_STYLES: Record<
-  Severity,
-  { border: string; badge: string; icon: React.ReactNode }
-> = {
+// Severity stays functionally conventional (info=blue, warning=yellow,
+// critical=red) — users expect that regardless of brand. "info" lands on
+// coastal-blue specifically, so it reads as conventional and on-brand at
+// once. Badge text uses the same mono/uppercase treatment as every other
+// label on the site (type-label), not a one-off font.
+const SEVERITY_STYLES: Record<Severity, { border: string; badge: string; icon: React.ReactNode }> = {
   info: {
-    border: "border-l-blue-500",
-    badge: "border-transparent bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",
+    border: "border-l-coastal-blue",
+    badge: "border-transparent bg-coastal-blue/10 text-primary",
     icon: <Info className="size-3" />,
   },
   warning: {
     border: "border-l-yellow-500",
-    badge:
-      "border-transparent bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-300",
+    badge: "border-transparent bg-yellow-500/10 text-yellow-700",
     icon: <TriangleAlert className="size-3" />,
   },
   critical: {
     border: "border-l-red-500",
-    badge: "border-transparent bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+    badge: "border-transparent bg-red-500/10 text-red-700",
     icon: <ShieldAlert className="size-3" />,
   },
 };
-
-function scoreColor(score: number | undefined) {
-  if (score === undefined) return { text: "text-muted-foreground", bar: "bg-muted-foreground" };
-  if (score >= 80) return { text: "text-green-600 dark:text-green-400", bar: "bg-green-500" };
-  if (score >= 60) return { text: "text-yellow-600 dark:text-yellow-400", bar: "bg-yellow-500" };
-  return { text: "text-red-600 dark:text-red-400", bar: "bg-red-500" };
-}
 
 function formatTimestamp(value: string | null) {
   if (!value) return null;
@@ -127,76 +123,178 @@ function formatKpiValue(kpi: Kpi): string {
   return `${kpi.value.toLocaleString()}${kpi.unit}`;
 }
 
-// KPI labels are dynamic (domain-dependent, e.g. "Total Revenue" vs "Total
+function kpiDecimals(kpi: Kpi): number {
+  if (kpi.format === "currency") return 2;
+  if (kpi.format === "percent") return Number.isInteger(kpi.value) ? 0 : 1;
+  return 0;
+}
+
+// KPI labels are dynamic (domain-dependent: "Total Revenue" vs "Total
 // Complaints" vs "Most Complete Column"), so icons are picked by matching
-// keywords in the label rather than hardcoding per domain — this keeps it
-// working for sales/finance/complaints/generic KPI sets without special-
-// casing each one.
+// keywords rather than hardcoding per domain. Every rule uses a low-alpha
+// tint behind a small icon — the same restrained chip treatment as the
+// homepage's agent icons — instead of a solid-color avatar circle, which
+// is the generic-dashboard-template look this page is explicitly not.
 const KPI_ICON_RULES: { keywords: RegExp; icon: LucideIcon; colorClasses: string }[] = [
   {
     keywords: /quality|score/,
     icon: ShieldCheck,
-    colorClasses: "bg-teal-100 text-teal-600 dark:bg-teal-950 dark:text-teal-400",
+    colorClasses: "bg-meadow-green/20 text-[#166534]",
   },
   {
-    // Checked before the revenue rule below: labels like "Average Order
-    // Value" contain both "average" and "value", and should read as an
-    // average-type KPI (TrendingUp), not a raw currency total (DollarSign).
+    // Checked before the revenue rule below: "Average Order Value" contains
+    // both "average" and "value", and should read as an average (TrendingUp)
+    // rather than a raw currency total (DollarSign).
     keywords: /average|avg|mean/,
     icon: TrendingUp,
-    colorClasses: "bg-orange-100 text-orange-600 dark:bg-orange-950 dark:text-orange-400",
+    colorClasses: "bg-sunlight-yellow/20 text-[#8A6410]",
   },
   {
     keywords: /revenue|amount|price|value/,
     icon: DollarSign,
-    colorClasses: "bg-emerald-100 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400",
+    colorClasses: "bg-coastal-blue/10 text-primary",
   },
   {
     keywords: /order/,
     icon: Package,
-    colorClasses: "bg-purple-100 text-purple-600 dark:bg-purple-950 dark:text-purple-400",
+    colorClasses: "bg-ocean-navy/10 text-foreground",
   },
   {
     keywords: /complaint|row|transaction|count|column/,
     icon: ListOrdered,
-    colorClasses: "bg-purple-100 text-purple-600 dark:bg-purple-950 dark:text-purple-400",
+    colorClasses: "bg-cloud-grey text-foreground",
   },
 ];
-const KPI_ICON_FALLBACK = {
-  icon: BarChart3,
-  colorClasses: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400",
-};
+const KPI_ICON_FALLBACK = { icon: BarChart3, colorClasses: "bg-cloud-grey text-foreground" };
 
 function getKpiIcon(label: string) {
   const normalized = label.toLowerCase();
-  const match = KPI_ICON_RULES.find((rule) => rule.keywords.test(normalized));
-  return match ?? KPI_ICON_FALLBACK;
+  return KPI_ICON_RULES.find((rule) => rule.keywords.test(normalized)) ?? KPI_ICON_FALLBACK;
 }
+
+const SEVERITY_RANK: Record<Severity, number> = { critical: 3, warning: 2, info: 1 };
 
 function DashboardSkeleton() {
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-10">
+    <div className="mx-auto flex max-w-6xl flex-col gap-16 px-4 py-14 md:px-8">
       <div className="flex flex-col gap-2">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-4 w-40" />
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
           <Skeleton key={i} className="h-24 w-full" />
         ))}
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
           <Skeleton key={i} className="h-20 w-full" />
         ))}
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {[0, 1].map((i) => (
-          <Skeleton key={i} className="h-80 w-full" />
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <Skeleton key={i} className="h-72 w-full" />
         ))}
       </div>
-      <Skeleton className="h-40 w-full" />
     </div>
+  );
+}
+
+/** Card/panel-level hover feedback (Connect), wired via the shared helper. */
+function useHoverReveal<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    if (!ref.current) return;
+    return animateHoverReveal(ref.current);
+  }, []);
+  return ref;
+}
+
+function KpiCard({ kpi, primary }: { kpi: Kpi; primary: boolean }) {
+  const cardRef = useHoverReveal<HTMLDivElement>();
+  const valueRef = useRef<HTMLSpanElement>(null);
+  const { icon: KpiIcon, colorClasses } = getKpiIcon(kpi.label);
+  const numeric = typeof kpi.value === "number";
+
+  useEffect(() => {
+    if (!numeric || !valueRef.current) return;
+    animateCountUp(valueRef.current, kpi.value as number, { decimals: kpiDecimals(kpi) });
+  }, [numeric, kpi]);
+
+  const prefix = kpi.format === "currency" ? kpi.unit : "";
+  const suffix = kpi.format !== "currency" ? kpi.unit : "";
+
+  return (
+    <Card
+      ref={cardRef}
+      className={cn("stagger-card relative overflow-hidden", primary && "border-foreground/20")}
+    >
+      {/* The Insight Moment's Mark — drawn only on the primary KPI. */}
+      {primary && (
+        <span
+          data-insight-mark
+          aria-hidden
+          className="absolute top-0 left-0 h-full w-[3px] bg-sunlight-yellow opacity-0"
+        />
+      )}
+      <CardContent className="flex items-start justify-between gap-3 pt-4">
+        <div>
+          <p data-insight-label className="type-label text-label">
+            {kpi.label}
+          </p>
+          <p className="type-value mt-1.5 text-2xl text-foreground">
+            {numeric ? (
+              <>
+                {prefix}
+                <span ref={valueRef}>0</span>
+                {suffix}
+              </>
+            ) : (
+              formatKpiValue(kpi)
+            )}
+          </p>
+        </div>
+        <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-mark", colorClasses)}>
+          <KpiIcon className="size-4" />
+        </span>
+      </CardContent>
+    </Card>
+  );
+}
+
+function InsightCard({ insight }: { insight: Insight }) {
+  const cardRef = useHoverReveal<HTMLDivElement>();
+  const style = SEVERITY_STYLES[insight.severity] ?? SEVERITY_STYLES.info;
+  return (
+    <Card ref={cardRef} size="sm" className={cn("stagger-card gap-2 border-l-[3px]", style.border)}>
+      <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
+        <CardTitle className="text-xs leading-snug font-semibold">{insight.title}</CardTitle>
+        <Badge className={cn(style.badge, "type-label shrink-0")}>
+          <span className="flex items-center gap-1">
+            {style.icon}
+            {insight.severity}
+          </span>
+        </Badge>
+      </CardHeader>
+      <CardContent>
+        <p className="line-clamp-2 type-small text-label">{insight.description}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ChartCard({ viz }: { viz: Visualization }) {
+  const cardRef = useHoverReveal<HTMLDivElement>();
+  return (
+    <Card ref={cardRef} className="stagger-card">
+      <CardHeader>
+        <CardTitle className="type-small font-semibold text-foreground">{viz.title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <EChart option={viz.echarts_option} />
+        {viz.note && <p className="mt-2 type-small text-label italic">{viz.note}</p>}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -206,6 +304,7 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AnalysisRunResponse | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,6 +346,38 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
     };
   }, [run_id]);
 
+  // One orchestrated entrance (Reveal), same restrained one-shot as the
+  // homepage — runs once per loaded run, no scroll triggers, no loops.
+  // Once settled, the primary KPI gets the Insight Moment: the rest recede
+  // briefly, it sharpens, and it keeps the Mark — the same mechanic used on
+  // the homepage's "Profiled" panel, reused rather than reinvented.
+  useEffect(() => {
+    if (state !== "loaded" || !rootRef.current) return;
+    const root = rootRef.current;
+    const cards = Array.from(root.querySelectorAll<HTMLElement>(".stagger-card"));
+    if (!cards.length) return;
+
+    const mm = gsap.matchMedia();
+    mm.add(
+      { reduce: "(prefers-reduced-motion: reduce)", full: "(prefers-reduced-motion: no-preference)" },
+      (context) => {
+        const { reduce } = context.conditions as { reduce: boolean };
+        if (reduce) return;
+
+        const tween = animateCardIn(cards, { stagger: 0.06 });
+        const primaryKpi = root.querySelector<HTMLElement>('[data-insight-mark]')?.closest(".stagger-card");
+        if (primaryKpi instanceof HTMLElement) {
+          const kpiCards = root.querySelectorAll<HTMLElement>("[data-kpi-section] .stagger-card");
+          tween?.eventCallback("onComplete", () => {
+            animateInsightMoment(primaryKpi, { siblings: Array.from(kpiCards) });
+          });
+        }
+      }
+    );
+
+    return () => mm.revert();
+  }, [state, data]);
+
   if (state === "loading") {
     return <DashboardSkeleton />;
   }
@@ -255,38 +386,38 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
     return (
       <div className="mx-auto flex max-w-xl flex-col items-center gap-4 px-4 py-24 text-center">
         <AlertTriangle className="size-10 text-destructive" />
-        <h1 className="text-xl font-semibold">Couldn&apos;t load this analysis</h1>
-        <p className="text-muted-foreground">{error}</p>
-        <Link href="/" className="text-sm font-medium text-primary underline-offset-4 hover:underline">
+        <h1 className="type-h3">Couldn&apos;t load this analysis</h1>
+        <p className="type-small text-label">{error}</p>
+        <Link href="/" className="type-small font-medium text-primary underline-offset-4 hover:underline">
           Back to upload
         </Link>
       </div>
     );
   }
 
-  const { text: scoreText, bar: scoreBar } = scoreColor(data.quality_report?.overall_score);
   const timestamp = formatTimestamp(data.finished_at || data.started_at);
+  const sortedInsights = [...data.insights].sort(
+    (a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0)
+  );
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-10">
+    <div ref={rootRef} className="mx-auto flex max-w-6xl flex-col gap-16 px-4 py-14 md:px-8">
       {/* Header */}
       <div className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold">
-            {data.dataset_filename || "Untitled dataset"}
-          </h1>
+          <h1 className="type-h2 text-foreground">{data.dataset_filename || "Untitled dataset"}</h1>
           {data.data_domain && (
-            <Badge variant="secondary" className="capitalize">
+            <Badge className="type-label border-transparent bg-coastal-blue/10 capitalize text-primary">
               {data.data_domain}
             </Badge>
           )}
         </div>
-        {timestamp && <p className="text-sm text-muted-foreground">Analyzed {timestamp}</p>}
+        {timestamp && <p className="type-small text-label">Analyzed {timestamp}</p>}
       </div>
 
       {/* done_with_errors banner */}
       {data.status === "done_with_errors" && data.note && (
-        <div className="flex items-start gap-2 rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-3 text-sm text-yellow-900 dark:border-yellow-900 dark:bg-yellow-950 dark:text-yellow-200">
+        <div className="-mt-10 flex items-start gap-2 rounded-input border border-yellow-500/30 bg-yellow-500/5 px-4 py-3 type-small text-yellow-800">
           <TriangleAlert className="mt-0.5 size-4 shrink-0" />
           <span>{data.note}</span>
         </div>
@@ -294,115 +425,39 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
 
       {/* KPIs */}
       {data.kpis?.length > 0 && (
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {data.kpis.map((kpi, i) => {
-            const { icon: KpiIcon, colorClasses } = getKpiIcon(kpi.label);
-            return (
-              <Card key={i}>
-                <CardContent className="flex items-start justify-between gap-2 pt-4">
-                  <div>
-                    <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                      {kpi.label}
-                    </p>
-                    <p className="mt-1 text-2xl font-bold">{formatKpiValue(kpi)}</p>
-                  </div>
-                  <span
-                    className={cn(
-                      "flex size-9 shrink-0 items-center justify-center rounded-full",
-                      colorClasses
-                    )}
-                  >
-                    <KpiIcon className="size-5" />
-                  </span>
-                </CardContent>
-              </Card>
-            );
-          })}
+        <section data-kpi-section className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          {data.kpis.map((kpi, i) => (
+            <KpiCard key={i} kpi={kpi} primary={i === 0} />
+          ))}
         </section>
       )}
 
       {/* Insights */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">Insights</h2>
-        {data.insights.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No insights were generated for this run.</p>
+      <section className="flex flex-col gap-5">
+        <h2 className="type-label text-label">Insights</h2>
+        {sortedInsights.length === 0 ? (
+          <p className="type-small text-label">No insights were generated for this run.</p>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {data.insights.map((insight) => {
-              const style = SEVERITY_STYLES[insight.severity] ?? SEVERITY_STYLES.info;
-              return (
-                <Card key={insight.id} size="sm" className={cn("gap-2 border-l-4", style.border)}>
-                  <CardHeader className="flex-row items-start justify-between gap-2 space-y-0">
-                    <CardTitle className="text-xs leading-snug font-semibold">
-                      {insight.title}
-                    </CardTitle>
-                    <Badge className={cn(style.badge, "shrink-0")}>
-                      <span className="flex items-center gap-1">
-                        {style.icon}
-                        {insight.severity}
-                      </span>
-                    </Badge>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="line-clamp-2 text-xs text-muted-foreground">
-                      {insight.description}
-                    </p>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* Charts */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">Charts</h2>
-        {data.visualizations.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No charts were generated for this run.</p>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            {data.visualizations.map((viz, i) => (
-              <Card key={`${viz.chart_type}-${i}`}>
-                <CardHeader>
-                  <CardTitle className="text-sm">{viz.title}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <EChart option={viz.echarts_option} />
-                  {viz.note && (
-                    <p className="mt-2 text-xs text-muted-foreground italic">{viz.note}</p>
-                  )}
-                </CardContent>
-              </Card>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {sortedInsights.map((insight) => (
+              <InsightCard key={insight.id} insight={insight} />
             ))}
           </div>
         )}
       </section>
 
-      {/* Data Quality */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">Data Quality</h2>
-        <Card>
-          <CardContent className="flex flex-col gap-4 pt-4 sm:flex-row sm:items-center">
-            <div className="flex flex-col items-center gap-1 sm:w-40">
-              <span className={cn("text-5xl font-bold", scoreText)}>
-                {data.quality_report?.overall_score ?? "—"}
-              </span>
-              <span className="text-xs text-muted-foreground">/ 100</span>
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn("h-full rounded-full", scoreBar)}
-                  style={{
-                    width: `${Math.min(100, Math.max(0, data.quality_report?.overall_score ?? 0))}%`,
-                  }}
-                />
-              </div>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {data.quality_report?.summary || "No data quality summary available for this run."}
-            </p>
-          </CardContent>
-        </Card>
+      {/* Charts */}
+      <section className="flex flex-col gap-5">
+        <h2 className="type-label text-label">Charts</h2>
+        {data.visualizations.length === 0 ? (
+          <p className="type-small text-label">No charts were generated for this run.</p>
+        ) : (
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {data.visualizations.map((viz, i) => (
+              <ChartCard key={`${viz.chart_type}-${i}`} viz={viz} />
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );

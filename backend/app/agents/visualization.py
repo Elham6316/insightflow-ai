@@ -45,7 +45,8 @@ def _line_chart_from_trends(trends: dict) -> dict | None:
 
     title = f"{_title_case(primary_col)} Trend by Month"
     option = {
-        "title": {"text": title},
+        # No internal ECharts title — the dashboard card header renders the
+        # title in HTML. One source of truth, so it never shows twice.
         "tooltip": {"trigger": "axis"},
         "xAxis": {"type": "category", "data": periods},
         "yAxis": {"type": "value"},
@@ -78,7 +79,9 @@ def _heatmap_from_correlations(correlations: dict) -> dict | None:
             rounded = round(value, 2) if value is not None else None
             data.append([col_idx, row_idx, rounded if rounded is not None else "-"])
 
-    rotate_labels = 30 if len(cols) > 4 else 0
+    # Rotate sooner than before (>=3 cols, not >4) — a 3-col dashboard grid
+    # gives each heatmap card less width, so labels crowd at a lower count.
+    rotate_labels = 30 if len(cols) >= 3 else 0
 
     title = "Correlation Heatmap"
     option = {
@@ -86,19 +89,22 @@ def _heatmap_from_correlations(correlations: dict) -> dict | None:
         # chart's title via the surrounding Card's own title.
         "tooltip": {"position": "top"},
         "axisPointer": {"show": False},
-        "grid": {"top": 40, "bottom": 50, "left": 90, "right": 20, "containLabel": True},
+        # Tighter than a 2-col layout would need — these charts render in a
+        # 3-col grid on desktop, so labels/margins are sized for a narrower
+        # card.
+        "grid": {"top": 30, "bottom": 44, "left": 70, "right": 16, "containLabel": True},
         "xAxis": {
             "type": "category",
             "data": cols,
             "splitArea": {"show": True},
-            "axisLabel": {"fontSize": 10, "interval": 0, "rotate": rotate_labels},
+            "axisLabel": {"fontSize": 9, "interval": 0, "rotate": rotate_labels},
             "axisPointer": {"show": False},
         },
         "yAxis": {
             "type": "category",
             "data": cols,
             "splitArea": {"show": True},
-            "axisLabel": {"fontSize": 10},
+            "axisLabel": {"fontSize": 9},
             "axisPointer": {"show": False},
         },
         "visualMap": {
@@ -109,13 +115,17 @@ def _heatmap_from_correlations(correlations: dict) -> dict | None:
             "min": -1,
             "max": 1,
             "show": False,
+            # Brand-colored diverging scale: sunlight-yellow (negative) ->
+            # soft-sand (near zero) -> coastal-blue (positive), instead of
+            # ECharts' default blue gradient.
+            "inRange": {"color": ["#FFD369", "#F7F9FC", "#3490DC"]},
         },
         "series": [
             {
                 "name": "Correlation",
                 "type": "heatmap",
                 "data": data,
-                "label": {"show": True, "fontSize": 10},
+                "label": {"show": True, "fontSize": 9},
             }
         ],
     }
@@ -132,7 +142,6 @@ def _heatmap_from_correlations(correlations: dict) -> dict | None:
 def _bar_chart_from_categorical(col: str, counts: dict) -> dict:
     title = f"Top {_title_case(col)} Values"
     option = {
-        "title": {"text": title},
         "tooltip": {"trigger": "axis"},
         "xAxis": {"type": "category", "data": list(counts.keys())},
         "yAxis": {"type": "value"},
@@ -151,7 +160,6 @@ def _bar_chart_from_categorical(col: str, counts: dict) -> dict:
 def _pie_chart_from_categorical(col: str, counts: dict) -> dict:
     title = f"{_title_case(col)} Breakdown"
     option = {
-        "title": {"text": title},
         "tooltip": {"trigger": "item"},
         "series": [
             {
@@ -215,12 +223,10 @@ def _apply_insight_titles(charts: list[dict], insights: list[dict]) -> None:
     for chart in charts:
         matched_title = _find_matching_insight_title(chart["related_metric"], insights)
         if matched_title and matched_title not in used_titles:
+            # No chart carries an internal ECharts title (the dashboard
+            # card header is the only place a title renders), so only the
+            # dict used by the HTML header needs updating here.
             chart["title"] = matched_title
-            # Not every chart has an internal ECharts title (the heatmap
-            # deliberately doesn't, to avoid colliding with its visualMap
-            # legend) — only update it if present.
-            if "title" in chart["echarts_option"]:
-                chart["echarts_option"]["title"]["text"] = matched_title
             used_titles.add(matched_title)
 
 
