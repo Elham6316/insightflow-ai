@@ -1,3 +1,4 @@
+import re
 from typing import Literal
 
 from pydantic import BaseModel
@@ -6,9 +7,25 @@ from app.agents.base import BaseAgent
 
 _SALES_REVENUE_KEYWORDS = ("total", "revenue", "amount", "sales")
 _UNIT_PRICE_KEYWORDS = ("unit_price", "price")
-_FINANCE_AMOUNT_KEYWORDS = ("amount", "total", "value", "transaction")
+# "spent"/"spend"/"actual" are checked before "budget"/"allocated" so that,
+# when a dataset has both (e.g. budget_allocated + actual_spent), the KPI
+# lands on the real transacted amount rather than the planned/budgeted one.
+_FINANCE_AMOUNT_KEYWORDS = (
+    "amount",
+    "total",
+    "value",
+    "transaction",
+    "spent",
+    "spend",
+    "actual",
+    "expense",
+    "budget",
+    "allocated",
+)
 _RESOLUTION_KEYWORDS = ("resolution", "duration", "days", "hours", "time")
 _CATEGORY_NAME_KEYWORDS = ("category", "type", "issue", "reason")
+
+_ID_COLUMN_NAME_RE = re.compile(r"(^|_)id$", re.IGNORECASE)
 
 
 class Kpi(BaseModel):
@@ -19,12 +36,53 @@ class Kpi(BaseModel):
 
 
 def _pick_numeric_column(distributions: dict, keywords: tuple[str, ...]) -> str | None:
-    cols = list(distributions.keys())
+    # id-like columns are skipped even on a keyword hit — e.g. "transaction"
+    # matching "transaction_id" would otherwise win over a real amount
+    # column just because a keyword happens to be a substring of an id
+    # column's name. This is the same check the durable magnitude-based
+    # fallback below uses, applied here too rather than only there.
     for keyword in keywords:
-        for col in cols:
-            if keyword in col.lower():
+        for col, stats in distributions.items():
+            if keyword in col.lower() and not _looks_like_id_column(col, stats):
                 return col
     return None
+
+
+def _looks_like_id_column(col: str, stats: dict) -> bool:
+    """True for columns that are almost certainly an identifier, not a
+    meaningful amount — by name (*_id) or by shape (a dense run of unique
+    sequential integers, e.g. 1..15 with no gaps, which is exactly what an
+    autoincrementing id column looks like from `describe()` stats alone)."""
+    if _ID_COLUMN_NAME_RE.search(col):
+        return True
+
+    count, min_v, max_v = stats.get("count"), stats.get("min"), stats.get("max")
+    if count is None or min_v is None or max_v is None:
+        return False
+    if float(min_v).is_integer() and float(max_v).is_integer():
+        if (max_v - min_v + 1) == count:
+            return True
+    return False
+
+
+def _highest_magnitude_numeric_column(distributions: dict) -> str | None:
+    """Durable fallback for keyword-based amount detection: when no column
+    name matches any known keyword, pick whichever numeric column has the
+    largest total magnitude (mean * count), skipping id-like columns. This
+    is what keeps a newly-seen dataset's KPIs from silently showing $0.00
+    just because its columns weren't a keyword this list happened to know
+    about yet."""
+    best_col, best_total = None, None
+    for col, stats in distributions.items():
+        if _looks_like_id_column(col, stats):
+            continue
+        mean, count = stats.get("mean"), stats.get("count")
+        if mean is None or count is None:
+            continue
+        total = abs(mean * count)
+        if best_total is None or total > best_total:
+            best_col, best_total = col, total
+    return best_col
 
 
 def _stat(distributions: dict, col: str | None, stat: str, default=0):
@@ -70,6 +128,8 @@ def _sales_kpis(state: dict, eda_results: dict, quality_report: dict) -> list[Kp
     total_rows = _infer_total_rows(state, eda_results)
 
     revenue_col = _pick_numeric_column(distributions, _SALES_REVENUE_KEYWORDS)
+    unit_price_col = _pick_numeric_column(distributions, _UNIT_PRICE_KEYWORDS)
+
     if revenue_col:
         mean = _stat(distributions, revenue_col, "mean")
         count = _stat(distributions, revenue_col, "count")
@@ -77,12 +137,22 @@ def _sales_kpis(state: dict, eda_results: dict, quality_report: dict) -> list[Kp
         avg_value_kpi = Kpi(
             label="Average Order Value", value=_round(mean), unit="$", format="currency"
         )
-    else:
-        unit_price_col = _pick_numeric_column(distributions, _UNIT_PRICE_KEYWORDS)
-        mean = _stat(distributions, unit_price_col, "mean") if unit_price_col else 0
+    elif unit_price_col:
+        mean = _stat(distributions, unit_price_col, "mean")
         total_revenue = 0
         avg_value_kpi = Kpi(
             label="Average Unit Price", value=_round(mean), unit="$", format="currency"
+        )
+    else:
+        # Durable fallback: no revenue/unit-price keyword matched at all, so
+        # rather than silently showing $0.00, use whichever numeric column
+        # actually carries the largest amounts (excluding id-like columns).
+        fallback_col = _highest_magnitude_numeric_column(distributions)
+        mean = _stat(distributions, fallback_col, "mean") if fallback_col else 0
+        count = _stat(distributions, fallback_col, "count") if fallback_col else 0
+        total_revenue = mean * count if mean and count else 0
+        avg_value_kpi = Kpi(
+            label="Average Transaction Value", value=_round(mean), unit="$", format="currency"
         )
 
     return [
@@ -97,7 +167,9 @@ def _finance_kpis(state: dict, eda_results: dict, quality_report: dict) -> list[
     distributions = eda_results.get("distributions") or {}
     total_rows = _infer_total_rows(state, eda_results)
 
-    amount_col = _pick_numeric_column(distributions, _FINANCE_AMOUNT_KEYWORDS)
+    amount_col = _pick_numeric_column(
+        distributions, _FINANCE_AMOUNT_KEYWORDS
+    ) or _highest_magnitude_numeric_column(distributions)
     mean = _stat(distributions, amount_col, "mean") if amount_col else 0
     count = _stat(distributions, amount_col, "count") if amount_col else 0
     total_amount = mean * count if mean and count else 0

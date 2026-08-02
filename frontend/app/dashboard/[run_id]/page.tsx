@@ -286,7 +286,7 @@ function InsightCard({ insight }: { insight: Insight }) {
 function ChartCard({ viz }: { viz: Visualization }) {
   const cardRef = useHoverReveal<HTMLDivElement>();
   return (
-    <Card ref={cardRef} className="stagger-card">
+    <Card ref={cardRef} className="stagger-card h-full">
       <CardHeader>
         <CardTitle className="type-small font-semibold text-foreground">{viz.title}</CardTitle>
       </CardHeader>
@@ -295,6 +295,103 @@ function ChartCard({ viz }: { viz: Visualization }) {
         {viz.note && <p className="mt-2 type-small text-label italic">{viz.note}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+// Denser chart types get more room (2 of 3 desktop columns) instead of
+// competing for the same 1/3 width as a simple bar/pie/line. Only heatmaps
+// exist today, but this is a type check, not a hardcoded list, so any
+// future chart type can opt in by widening this predicate.
+function isWideChart(viz: Visualization): boolean {
+  return viz.chart_type === "heatmap";
+}
+
+type ChartItem = { viz: Visualization; wide: boolean };
+type ChartRow = ChartItem[];
+
+const ROW_CAPACITY = 3;
+
+/**
+ * Groups charts into rows for a 3-column desktop grid, avoiding a lone
+ * chart stranded alone in the final row.
+ *
+ * Wide charts cost 2 units of the 3-unit row capacity, normal charts cost
+ * 1. Charts are packed in their original order (greedy first-fit), so the
+ * dashboard's chart order is preserved. The only special case is the very
+ * end: if that leaves a trailing row containing exactly one normal chart,
+ * one chart is borrowed back from the previous (full) row so the last two
+ * rows become an even 2-2 split instead of 3-1. This is the same fix for
+ * every remainder case — n%3==0 never triggers it, n%3==1 turns a trailing
+ * "3, 1" into "2, 2", and n%3==2 already ends in a natural 2 with nothing
+ * to fix.
+ */
+function groupChartsIntoRows(visualizations: Visualization[]): ChartRow[] {
+  const items: ChartItem[] = visualizations.map((viz) => ({ viz, wide: isWideChart(viz) }));
+  const rows: ChartRow[] = [];
+  let current: ChartRow = [];
+  let currentUnits = 0;
+
+  for (const item of items) {
+    const cost = item.wide ? 2 : 1;
+    if (currentUnits + cost > ROW_CAPACITY && current.length > 0) {
+      rows.push(current);
+      current = [];
+      currentUnits = 0;
+    }
+    current.push(item);
+    currentUnits += cost;
+  }
+  if (current.length > 0) rows.push(current);
+
+  if (rows.length >= 2) {
+    const last = rows[rows.length - 1];
+    const isLoneNormalOrphan = last.length === 1 && !last[0].wide;
+    if (isLoneNormalOrphan) {
+      const prev = rows[rows.length - 2];
+      const prevAllNormal = prev.every((item) => !item.wide);
+      if (prevAllNormal && prev.length >= 2) {
+        const borrowed = prev.pop()!;
+        last.unshift(borrowed);
+      }
+    }
+  }
+
+  return rows;
+}
+
+function rowUnits(row: ChartRow): number {
+  return row.reduce((sum, item) => sum + (item.wide ? 2 : 1), 0);
+}
+
+// One row = one flex container, sized so its items line up exactly with a
+// native 3-column desktop grid (same 1.5rem/gap-6 gap). A row that doesn't
+// fill all 3 units centers itself instead of left-aligning with a visible
+// gap on the right. Below desktop, wide charts simply take the full row
+// and normal charts pair up two-per-row — the exact orphan-avoidance math
+// is a 3-column-desktop-specific concern, per the task.
+function ChartRowView({ row }: { row: ChartRow }) {
+  const full = rowUnits(row) >= ROW_CAPACITY;
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-6 md:flex-row md:flex-wrap lg:flex-nowrap",
+        !full && "lg:justify-center"
+      )}
+    >
+      {row.map((item, i) => (
+        <div
+          key={i}
+          className={cn(
+            "min-w-0",
+            item.wide
+              ? "w-full md:w-full lg:w-[calc((100%-3rem)/3*2+1.5rem)]"
+              : "w-full md:w-[calc((100%-1.5rem)/2)] lg:w-[calc((100%-3rem)/3)]"
+          )}
+        >
+          <ChartCard viz={item.viz} />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -399,6 +496,7 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
   const sortedInsights = [...data.insights].sort(
     (a, b) => (SEVERITY_RANK[b.severity] ?? 0) - (SEVERITY_RANK[a.severity] ?? 0)
   );
+  const chartRows = groupChartsIntoRows(data.visualizations);
 
   return (
     <div ref={rootRef} className="mx-auto flex max-w-6xl flex-col gap-16 px-4 py-14 md:px-8">
@@ -452,9 +550,9 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
         {data.visualizations.length === 0 ? (
           <p className="type-small text-label">No charts were generated for this run.</p>
         ) : (
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-            {data.visualizations.map((viz, i) => (
-              <ChartCard key={`${viz.chart_type}-${i}`} viz={viz} />
+          <div className="flex flex-col gap-6">
+            {chartRows.map((row, i) => (
+              <ChartRowView key={i} row={row} />
             ))}
           </div>
         )}
