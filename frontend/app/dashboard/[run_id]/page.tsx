@@ -52,6 +52,13 @@ type Kpi = {
   format: "currency" | "number" | "percent";
 };
 
+type CleaningAction = {
+  column: string | null;
+  action: string;
+  detail: string;
+  affected: number;
+};
+
 type QualityReport = {
   overall_score?: number;
   summary?: string;
@@ -69,6 +76,7 @@ type AnalysisRunResponse = {
   finished_at: string | null;
   data_domain: string | null;
   quality_report: QualityReport;
+  cleaning_actions: CleaningAction[];
   kpis: Kpi[];
   visualizations: Visualization[];
   insights: Insight[];
@@ -295,6 +303,32 @@ function ChartCard({ viz }: { viz: Visualization }) {
         {viz.note && <p className="mt-2 type-small text-label italic">{viz.note}</p>}
       </CardContent>
     </Card>
+  );
+}
+
+// One compact card, one line per action — column name (if any) plus the
+// backend's own human-readable detail string, so the phrasing only lives
+// in one place (backend/app/agents/cleaning.py) rather than being
+// re-derived here from the raw action/affected fields.
+function CleaningSection({ actions }: { actions: CleaningAction[] }) {
+  const cardRef = useHoverReveal<HTMLDivElement>();
+  return (
+    <section className="flex flex-col gap-5">
+      <h2 className="type-label text-label">Data Cleaning</h2>
+      <Card ref={cardRef} className="stagger-card">
+        <CardContent className="flex flex-col gap-2.5 pt-4">
+          {actions.map((a, i) => (
+            <div key={i} className="flex items-baseline gap-2">
+              <span className="mt-1.5 size-1 shrink-0 rounded-full bg-cloud-grey" aria-hidden />
+              <p className="type-small text-foreground">
+                {a.column && <span className="font-medium">{a.column}: </span>}
+                <span className="text-label">{a.detail}</span>
+              </p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -543,6 +577,9 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
           </div>
         )}
       </section>
+
+      {/* Data Cleaning — only when CleaningAgent actually did something */}
+      {data.cleaning_actions?.length > 0 && <CleaningSection actions={data.cleaning_actions} />}
 
       {/* Charts */}
       <section className="flex flex-col gap-5">

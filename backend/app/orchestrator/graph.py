@@ -3,6 +3,7 @@ import logging
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.base import BaseAgent
+from app.agents.cleaning import CleaningAgent
 from app.agents.data_quality import DataQualityAgent
 from app.agents.eda import EDAAgent
 from app.agents.insight import InsightAgent
@@ -59,6 +60,7 @@ def build_graph():
 
     graph.add_node("planner", _make_node(PlannerAgent()))
     graph.add_node("data_quality", _make_node(DataQualityAgent()))
+    graph.add_node("cleaning", _make_node(CleaningAgent()))
     graph.add_node("eda", _make_node(EDAAgent()))
     graph.add_node("kpi", _make_node(KpiAgent()))
     graph.add_node("insight", _make_node(InsightAgent()))
@@ -66,7 +68,8 @@ def build_graph():
 
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "data_quality")
-    graph.add_edge("data_quality", "eda")
+    graph.add_edge("data_quality", "cleaning")
+    graph.add_edge("cleaning", "eda")
     graph.add_edge("eda", "kpi")
     graph.add_edge("kpi", "insight")
     graph.add_edge("insight", "visualization")

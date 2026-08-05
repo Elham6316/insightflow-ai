@@ -21,6 +21,7 @@ _AGENT_OUTPUT_FIELDS = {
     "eda": "eda_results",
 }
 _LIST_AGENT_OUTPUT_FIELDS = {
+    "cleaning": "cleaning_actions",
     "kpi": "kpis",
     "insight": "insights",
     "visualization": "visualizations",
@@ -133,6 +134,7 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
         "visualizations", []
     )
     kpis = (outputs_by_agent.get("kpi") or {}).get("kpis", [])
+    cleaning_actions = (outputs_by_agent.get("cleaning") or {}).get("cleaning_actions", [])
 
     response = {
         "run_id": str(run.id),
@@ -144,6 +146,7 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
         "finished_at": run.finished_at,
         "data_domain": planner_output.get("data_domain"),
         "quality_report": quality_report,
+        "cleaning_actions": cleaning_actions,
         "kpis": kpis,
         "visualizations": visualizations,
         "agent_outputs": [

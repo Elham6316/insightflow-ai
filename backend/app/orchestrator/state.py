@@ -16,6 +16,11 @@ class AnalysisState(TypedDict, total=False):
     # written by DataQualityAgent (app/agents/data_quality.py)
     quality_report: dict[str, Any]
 
+    # written by CleaningAgent (app/agents/cleaning.py). EDAAgent reads
+    # cleaned_file_path in preference to file_path when present.
+    cleaning_actions: list[dict[str, Any]]
+    cleaned_file_path: str
+
     # written by EDAAgent (app/agents/eda.py)
     eda_results: dict[str, Any]
 

@@ -155,7 +155,7 @@ class EDAAgent(BaseAgent):
         return "eda"
 
     async def execute(self, state: dict) -> dict:
-        file_path = state["file_path"]
+        file_path = state.get("cleaned_file_path") or state["file_path"]
         df = _load_dataframe(file_path)
 
         distributions, distributions_note = _describe_numeric(df)
