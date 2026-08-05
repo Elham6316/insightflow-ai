@@ -1,5 +1,6 @@
 import calendar
 import re
+import statistics
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +14,7 @@ _MIN_ROWS_FOR_TRENDS = 2
 _MIN_DATE_PARSE_RATE = 0.8
 _TOP_N_CATEGORIES = 5
 _INCOMPLETE_PERIOD_DAY_THRESHOLD = 3  # days before month-end; simple heuristic, not exact
+_GAP_MULTIPLIER = 2  # a gap over 2x the typical month-to-month spacing counts as "genuine"
 
 
 class EDAResults(BaseModel):
@@ -89,6 +91,36 @@ def _find_date_series(df: pd.DataFrame) -> tuple[str | None, pd.Series | None]:
     return None, None
 
 
+def _annotate_gaps(data: list[dict]) -> None:
+    """Flag any period whose gap from the previous one exceeds 2x the
+    typical (median) month-to-month spacing — e.g. years of missing history
+    between two present months — so a downstream consumer (chart caption,
+    ForecastAgent's regression) doesn't treat it as a normal consecutive
+    step. Mutates `data` in place, adding `gap_before_months` to every row
+    (0 when there's no gap) and appending a note to flagged rows."""
+    for row in data:
+        row["gap_before_months"] = 0
+    if len(data) < 2:
+        return
+
+    ordinals = [pd.Period(row["period"], freq="M").ordinal for row in data]
+    diffs = [b - a for a, b in zip(ordinals, ordinals[1:])]
+    typical = statistics.median(diffs)
+    threshold = max(2, typical * _GAP_MULTIPLIER)
+
+    for i, gap in enumerate(diffs, start=1):
+        if gap <= threshold:
+            continue
+        data[i]["gap_before_months"] = gap
+        note = (
+            f"There is a {gap}-month gap in the data between "
+            f"{data[i - 1]['period']} and {data[i]['period']} — treat any "
+            f"trend spanning this gap with caution."
+        )
+        existing = data[i]["note"]
+        data[i]["note"] = f"{existing} {note}" if existing else note
+
+
 def _trends(df: pd.DataFrame) -> tuple[dict, str | None]:
     date_col, parsed = _find_date_series(df)
     if date_col is None:
@@ -113,6 +145,7 @@ def _trends(df: pd.DataFrame) -> tuple[dict, str | None]:
                 row[f"sum_{col}"] = _clean(group[col].sum())
             data.append(row)
         data.sort(key=lambda r: r["period"])
+        _annotate_gaps(data)
 
         max_date = parsed.max()
         if pd.notna(max_date):

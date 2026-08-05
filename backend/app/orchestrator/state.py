@@ -6,6 +6,13 @@ class AnalysisState(TypedDict, total=False):
     file_path: str
     profile: dict[str, Any]
 
+    # set by routes_analysis.py before invoking the graph, so ReportAgent
+    # (the final node) has the run's id for its output filename and the
+    # original filename for the report header — both only exist in the DB,
+    # not anywhere else in state.
+    run_id: str
+    dataset_filename: str
+
     # written by PlannerAgent (app/agents/planner.py)
     data_domain: str
     has_time_series: bool
@@ -24,6 +31,9 @@ class AnalysisState(TypedDict, total=False):
     # written by EDAAgent (app/agents/eda.py)
     eda_results: dict[str, Any]
 
+    # written by ForecastAgent (app/agents/forecast.py)
+    forecast: dict[str, Any]
+
     # written by KpiAgent (app/agents/kpi.py)
     kpis: list[dict[str, Any]]
 
@@ -32,6 +42,10 @@ class AnalysisState(TypedDict, total=False):
 
     # written by VisualizationAgent (app/agents/visualization.py)
     visualizations: list[dict[str, Any]]
+
+    # written by ReportAgent (app/agents/report.py)
+    executive_summary: str
+    report_path: str
 
     # written by BaseAgent.run() on any agent failure (app/agents/base.py)
     errors: list[dict[str, Any]]

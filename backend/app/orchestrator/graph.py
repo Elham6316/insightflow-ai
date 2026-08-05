@@ -6,9 +6,11 @@ from app.agents.base import BaseAgent
 from app.agents.cleaning import CleaningAgent
 from app.agents.data_quality import DataQualityAgent
 from app.agents.eda import EDAAgent
+from app.agents.forecast import ForecastAgent
 from app.agents.insight import InsightAgent
 from app.agents.kpi import KpiAgent
 from app.agents.planner import PlannerAgent
+from app.agents.report import ReportAgent
 from app.agents.visualization import VisualizationAgent
 from app.orchestrator.state import AnalysisState
 
@@ -62,18 +64,22 @@ def build_graph():
     graph.add_node("data_quality", _make_node(DataQualityAgent()))
     graph.add_node("cleaning", _make_node(CleaningAgent()))
     graph.add_node("eda", _make_node(EDAAgent()))
+    graph.add_node("forecast", _make_node(ForecastAgent()))
     graph.add_node("kpi", _make_node(KpiAgent()))
     graph.add_node("insight", _make_node(InsightAgent()))
     graph.add_node("visualization", _make_node(VisualizationAgent()))
+    graph.add_node("report", _make_node(ReportAgent()))
 
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "data_quality")
     graph.add_edge("data_quality", "cleaning")
     graph.add_edge("cleaning", "eda")
-    graph.add_edge("eda", "kpi")
+    graph.add_edge("eda", "forecast")
+    graph.add_edge("forecast", "kpi")
     graph.add_edge("kpi", "insight")
     graph.add_edge("insight", "visualization")
-    graph.add_edge("visualization", END)
+    graph.add_edge("visualization", "report")
+    graph.add_edge("report", END)
 
     return graph.compile()
 

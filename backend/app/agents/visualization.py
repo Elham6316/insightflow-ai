@@ -39,9 +39,10 @@ def _line_chart_from_trends(trends: dict) -> dict | None:
 
     periods = [row["period"] for row in data]
     values = [row.get(f"sum_{primary_col}") for row in data]
-    incomplete_notes = [
-        row["note"] for row in data if row.get("incomplete_period") and row.get("note")
-    ]
+    # Covers both the incomplete-final-period note and any gap-before-this-
+    # period note (see EDAAgent._annotate_gaps) — both are pre-built into
+    # row["note"] by eda.py already, so no need to distinguish them here.
+    notes = [row["note"] for row in data if row.get("note")]
 
     title = f"{_title_case(primary_col)} Trend by Month"
     option = {
@@ -61,7 +62,7 @@ def _line_chart_from_trends(trends: dict) -> dict | None:
         # Rendered by the frontend as a caption below the chart, not inside
         # the ECharts option — putting it in title.subtext overlapped the
         # chart title itself.
-        "note": " ".join(incomplete_notes) if incomplete_notes else None,
+        "note": " ".join(notes) if notes else None,
     }
 
 

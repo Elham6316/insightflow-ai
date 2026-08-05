@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   BarChart3,
   DollarSign,
+  Download,
   Info,
   ListOrdered,
   Package,
@@ -18,6 +19,7 @@ import {
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EChart } from "@/components/echart";
@@ -59,6 +61,26 @@ type CleaningAction = {
   affected: number;
 };
 
+type ForecastHistoryPoint = { period: string; value: number };
+
+type ForecastPoint = {
+  period: string;
+  predicted_value: number;
+  lower_bound: number;
+  upper_bound: number;
+};
+
+type ForecastData =
+  | { skipped: true; reason: string }
+  | {
+      skipped: false;
+      method: string;
+      column: string;
+      history: ForecastHistoryPoint[];
+      forecast_points: ForecastPoint[];
+      caveat: string;
+    };
+
 type QualityReport = {
   overall_score?: number;
   summary?: string;
@@ -77,6 +99,7 @@ type AnalysisRunResponse = {
   data_domain: string | null;
   quality_report: QualityReport;
   cleaning_actions: CleaningAction[];
+  forecast: ForecastData | Record<string, never>;
   kpis: Kpi[];
   visualizations: Visualization[];
   insights: Insight[];
@@ -312,6 +335,30 @@ function ChartCard({ viz }: { viz: Visualization }) {
 // re-derived here from the raw action/affected fields.
 function CleaningSection({ actions }: { actions: CleaningAction[] }) {
   const cardRef = useHoverReveal<HTMLDivElement>();
+
+  // Outlier flags don't change the data — they just surface what
+  // DataQualityAgent already found (see cleaning.py's _flag_outliers). When
+  // that's all that happened, this section shouldn't compete visually with
+  // Insights/Charts above it, so it collapses to a quiet single-line note
+  // instead of a full card.
+  const isMuted = actions.every((a) => a.action === "flag_outliers");
+
+  if (isMuted) {
+    return (
+      <section className="flex flex-col gap-1.5">
+        <h2 className="type-label text-label opacity-60">Data Cleaning</h2>
+        <div className="flex flex-col gap-1">
+          {actions.map((a, i) => (
+            <p key={i} className="text-xs text-label opacity-60">
+              {a.column && <span>{a.column}: </span>}
+              {a.detail}
+            </p>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="flex flex-col gap-5">
       <h2 className="type-label text-label">Data Cleaning</h2>
@@ -326,6 +373,112 @@ function CleaningSection({ actions }: { actions: CleaningAction[] }) {
               </p>
             </div>
           ))}
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+
+// Combines history + forecast into one continuous line: a solid historical
+// segment, a dashed predicted segment (sharing the last historical point so
+// the two connect with no visual gap), and a shaded confidence band behind
+// the predicted segment only. The band uses the standard ECharts trick of
+// stacking an invisible "lower bound" line under a visible "band height"
+// (upper - lower) area — stacking reconstructs the true upper value while
+// only the band itself is painted.
+function buildForecastChartOption(forecast: Extract<ForecastData, { skipped: false }>) {
+  const historyLen = forecast.history.length;
+  const categories = [...forecast.history.map((h) => h.period), ...forecast.forecast_points.map((f) => f.period)];
+  const lastHistoryValue = forecast.history[historyLen - 1]?.value ?? null;
+
+  const historicalData = categories.map((_, i) => (i < historyLen ? forecast.history[i].value : null));
+  const predictedData = categories.map((_, i) => {
+    if (i === historyLen - 1) return lastHistoryValue;
+    if (i < historyLen) return null;
+    return forecast.forecast_points[i - historyLen].predicted_value;
+  });
+  const lowerData = categories.map((_, i) => (i < historyLen ? null : forecast.forecast_points[i - historyLen].lower_bound));
+  const bandHeightData = categories.map((_, i) => {
+    if (i < historyLen) return null;
+    const point = forecast.forecast_points[i - historyLen];
+    return point.upper_bound - point.lower_bound;
+  });
+
+  return {
+    tooltip: { trigger: "axis" },
+    xAxis: { type: "category", data: categories },
+    yAxis: { type: "value" },
+    series: [
+      {
+        name: "Confidence range (lower)",
+        type: "line",
+        data: lowerData,
+        stack: "confidence-band",
+        symbol: "none",
+        lineStyle: { opacity: 0 },
+        silent: true,
+      },
+      {
+        name: "Confidence range",
+        type: "line",
+        data: bandHeightData,
+        stack: "confidence-band",
+        symbol: "none",
+        lineStyle: { opacity: 0 },
+        areaStyle: { color: "rgba(52, 144, 220, 0.15)" },
+        silent: true,
+      },
+      {
+        name: "Historical",
+        type: "line",
+        data: historicalData,
+        lineStyle: { color: "#3490DC" },
+        itemStyle: { color: "#3490DC" },
+      },
+      {
+        name: "Forecast",
+        type: "line",
+        data: predictedData,
+        lineStyle: { color: "#3490DC", type: "dashed" },
+        itemStyle: { color: "#3490DC" },
+      },
+    ],
+  };
+}
+
+// Runs from before ForecastAgent existed have forecast: {} (no agent_outputs
+// row), not a real ForecastData — narrow it away instead of rendering.
+function hasForecastData(forecast: AnalysisRunResponse["forecast"]): forecast is ForecastData {
+  return "skipped" in forecast;
+}
+
+function ForecastSection({ forecast }: { forecast: ForecastData }) {
+  const cardRef = useHoverReveal<HTMLDivElement>();
+
+  if (forecast.skipped) {
+    return (
+      <section className="flex flex-col gap-1.5">
+        <h2 className="type-label text-label opacity-60">Forecast</h2>
+        <p className="flex items-center gap-1.5 text-xs text-label opacity-60">
+          <Info className="size-3 shrink-0" aria-hidden />
+          {forecast.reason}
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="flex flex-col gap-5">
+      <h2 className="type-label text-label">Forecast</h2>
+      <Card ref={cardRef} className="stagger-card">
+        <CardHeader>
+          <CardTitle className="type-small font-semibold text-foreground capitalize">
+            {forecast.column.replace(/_/g, " ")} forecast
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EChart option={buildForecastChartOption(forecast)} />
+          <p className="mt-2 type-small text-label italic">{forecast.caveat}</p>
         </CardContent>
       </Card>
     </section>
@@ -535,16 +688,27 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
   return (
     <div ref={rootRef} className="mx-auto flex max-w-6xl flex-col gap-16 px-4 py-14 md:px-8">
       {/* Header */}
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="type-h2 text-foreground">{data.dataset_filename || "Untitled dataset"}</h1>
-          {data.data_domain && (
-            <Badge className="type-label border-transparent bg-coastal-blue/10 capitalize text-primary">
-              {data.data_domain}
-            </Badge>
-          )}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="type-h2 text-foreground">{data.dataset_filename || "Untitled dataset"}</h1>
+            {data.data_domain && (
+              <Badge className="type-label border-transparent bg-coastal-blue/10 capitalize text-primary">
+                {data.data_domain}
+              </Badge>
+            )}
+          </div>
+          {timestamp && <p className="type-small text-label">Analyzed {timestamp}</p>}
         </div>
-        {timestamp && <p className="type-small text-label">Analyzed {timestamp}</p>}
+        <Button
+          variant="outline"
+          className="border-coastal-blue/30 bg-coastal-blue/5 text-primary hover:bg-coastal-blue/10"
+          nativeButton={false}
+          render={<a href={`${API_URL}/analysis/${data.run_id}/report`} download />}
+        >
+          <Download className="size-4" />
+          Download Report
+        </Button>
       </div>
 
       {/* done_with_errors banner */}
@@ -594,6 +758,9 @@ export default function DashboardPage({ params }: { params: { run_id: string } }
           </div>
         )}
       </section>
+
+      {/* Forecast — omitted for runs from before this field existed */}
+      {hasForecastData(data.forecast) && <ForecastSection forecast={data.forecast} />}
     </div>
   );
 }

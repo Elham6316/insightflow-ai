@@ -5,6 +5,8 @@ alembic
 psycopg2-binary
 pydantic-settings
 pandas
+statsmodels
+reportlab
 openpyxl
 xlrd
 duckdb

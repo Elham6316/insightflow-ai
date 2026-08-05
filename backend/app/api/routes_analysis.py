@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.db.models import AgentOutput, AnalysisRun, Dataset, Insight
 from app.db.session import get_db
+from app.agents.report import REPORTS_DIR
 from app.orchestrator.graph import run_analysis
 from app.orchestrator.state import AnalysisState
 from app.services.data_loader import load_and_profile
@@ -19,6 +21,7 @@ _AGENT_OUTPUT_FIELDS = {
     "planner": "planner_output",
     "data_quality": "quality_report",
     "eda": "eda_results",
+    "forecast": "forecast",
 }
 _LIST_AGENT_OUTPUT_FIELDS = {
     "cleaning": "cleaning_actions",
@@ -56,6 +59,8 @@ async def run_dataset_analysis(dataset_id: str, db: Session = Depends(get_db)):
         "dataset_id": str(dataset.id),
         "file_path": dataset.file_path,
         "profile": profile,
+        "run_id": str(run.id),
+        "dataset_filename": dataset.filename,
     }
     final_state = await run_analysis(initial_state)
 
@@ -79,6 +84,18 @@ async def run_dataset_analysis(dataset_id: str, db: Session = Depends(get_db)):
                 status=_agent_status(agent_name, errors),
             )
         )
+
+    db.add(
+        AgentOutput(
+            run_id=run.id,
+            agent_name="report",
+            output={
+                "executive_summary": final_state.get("executive_summary"),
+                "report_path": final_state.get("report_path"),
+            },
+            status=_agent_status("report", errors),
+        )
+    )
 
     for insight in final_state.get("insights") or []:
         db.add(
@@ -135,6 +152,7 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
     )
     kpis = (outputs_by_agent.get("kpi") or {}).get("kpis", [])
     cleaning_actions = (outputs_by_agent.get("cleaning") or {}).get("cleaning_actions", [])
+    forecast = outputs_by_agent.get("forecast") or {}
 
     response = {
         "run_id": str(run.id),
@@ -147,6 +165,7 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
         "data_domain": planner_output.get("data_domain"),
         "quality_report": quality_report,
         "cleaning_actions": cleaning_actions,
+        "forecast": forecast,
         "kpis": kpis,
         "visualizations": visualizations,
         "agent_outputs": [
@@ -178,3 +197,21 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
             "completed using fallback/partial results."
         )
     return response
+
+
+@router.get("/analysis/{run_id}/report")
+def download_analysis_report(run_id: str, db: Session = Depends(get_db)):
+    run = db.get(AnalysisRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+
+    # ReportAgent always saves to this deterministic path (app/agents/report.py).
+    report_path = REPORTS_DIR / f"{run_id}.pdf"
+    if not report_path.exists():
+        raise HTTPException(status_code=404, detail="No report has been generated for this run")
+
+    return FileResponse(
+        path=str(report_path),
+        media_type="application/pdf",
+        filename=f"insightflow-report-{run_id}.pdf",
+    )
