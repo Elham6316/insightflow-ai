@@ -47,6 +47,14 @@ class AnalysisState(TypedDict, total=False):
     executive_summary: str
     report_path: str
 
+    # written by ReviewerAgent (app/agents/reviewer.py). needs_rerun/
+    # rerun_agent drive graph.py's conditional edge back to "kpi";
+    # review_rerun_count is capped there at 1 to guarantee termination.
+    review_notes: list[dict[str, Any]]
+    needs_rerun: bool
+    rerun_agent: str
+    review_rerun_count: int
+
     # written by BaseAgent.run() on any agent failure (app/agents/base.py)
     errors: list[dict[str, Any]]
 

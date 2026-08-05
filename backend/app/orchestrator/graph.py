@@ -11,6 +11,7 @@ from app.agents.insight import InsightAgent
 from app.agents.kpi import KpiAgent
 from app.agents.planner import PlannerAgent
 from app.agents.report import ReportAgent
+from app.agents.reviewer import ReviewerAgent
 from app.agents.visualization import VisualizationAgent
 from app.orchestrator.state import AnalysisState
 
@@ -57,6 +58,16 @@ def _make_node(agent: BaseAgent):
     return node
 
 
+def _route_after_review(state: AnalysisState) -> str:
+    # ReviewerAgent already enforces the rerun cap (review_rerun_count) and
+    # only sets needs_rerun when it actually incremented the counter, so
+    # this just reads the decision rather than re-deriving it — the only
+    # way this could loop forever is if ReviewerAgent's own cap logic broke.
+    if state.get("needs_rerun") and state.get("rerun_agent"):
+        return state["rerun_agent"]
+    return END
+
+
 def build_graph():
     graph = StateGraph(AnalysisState)
 
@@ -69,6 +80,7 @@ def build_graph():
     graph.add_node("insight", _make_node(InsightAgent()))
     graph.add_node("visualization", _make_node(VisualizationAgent()))
     graph.add_node("report", _make_node(ReportAgent()))
+    graph.add_node("reviewer", _make_node(ReviewerAgent()))
 
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "data_quality")
@@ -79,7 +91,8 @@ def build_graph():
     graph.add_edge("kpi", "insight")
     graph.add_edge("insight", "visualization")
     graph.add_edge("visualization", "report")
-    graph.add_edge("report", END)
+    graph.add_edge("report", "reviewer")
+    graph.add_conditional_edges("reviewer", _route_after_review, {"kpi": "kpi", END: END})
 
     return graph.compile()
 

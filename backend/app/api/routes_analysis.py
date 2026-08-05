@@ -28,6 +28,7 @@ _LIST_AGENT_OUTPUT_FIELDS = {
     "kpi": "kpis",
     "insight": "insights",
     "visualization": "visualizations",
+    "reviewer": "review_notes",
 }
 
 
@@ -153,6 +154,7 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
     kpis = (outputs_by_agent.get("kpi") or {}).get("kpis", [])
     cleaning_actions = (outputs_by_agent.get("cleaning") or {}).get("cleaning_actions", [])
     forecast = outputs_by_agent.get("forecast") or {}
+    review_notes = (outputs_by_agent.get("reviewer") or {}).get("review_notes", [])
 
     response = {
         "run_id": str(run.id),
@@ -166,6 +168,7 @@ def get_analysis_run(run_id: str, db: Session = Depends(get_db)):
         "quality_report": quality_report,
         "cleaning_actions": cleaning_actions,
         "forecast": forecast,
+        "review_notes": review_notes,
         "kpis": kpis,
         "visualizations": visualizations,
         "agent_outputs": [
