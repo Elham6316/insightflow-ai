@@ -2,7 +2,7 @@
   <img src="frontend/public/logo.png" alt="InsightFlow AI" width="220">
 </p>
 
-<h1 align="center">InsightFlow AI</h1>
+<h1 align="center"></h1>
 
 <p align="center">
   Upload a spreadsheet, get a data-quality report, KPIs, causal insights, and charts back — no manual analysis required.
@@ -107,11 +107,8 @@ Open `http://localhost:3000`, upload a `.csv`/`.xlsx` file, and run an analysis.
 
 ## 📸 Screenshots
 
-<!--
-Add screenshots here once available, e.g.:
-![Homepage](docs/screenshots/home.png)
-![Dashboard](docs/screenshots/dashboard.png)
--->
+![InsightFlow AI — Upload and Dashboard](docs/screenshots/preview.png)
+
 
 *(placeholder — screenshots to be added)*
 
