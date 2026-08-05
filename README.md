@@ -34,33 +34,42 @@
 
 ```mermaid
 flowchart LR
-    U[Upload<br/>.csv / .xlsx / .xls] --> P[Planner<br/>domain + plan]
-    P --> DQ[Data Quality<br/>score + report]
-    DQ --> E[EDA<br/>stats + trends]
-    E --> K[KPI<br/>domain-adapted]
-    K --> I[Insight<br/>causal reasoning]
-    I --> V[Visualization<br/>chart configs]
-    V --> D[Dashboard]
+    U[Upload<br/>.csv / .xlsx / .xls] --> P[Planner]
+    P --> DQ[Data Quality]
+    DQ --> C[Cleaning]
+    C --> E[EDA]
+    E --> F[Forecast]
+    F --> K[KPI]
+    K --> I[Insight]
+    I --> V[Visualization]
+    V --> R[Report]
+    R --> RV[Reviewer]
+    RV --> D[Dashboard]
+    RV -.critical KPI issue, max 1 retry.-> K
 ```
 
-Orchestration is a linear [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` (`backend/app/orchestrator/graph.py`) over a single shared `AnalysisState` dict. Every node is wrapped so an agent's exception is caught, logged, and appended to `state["errors"]` instead of raising — the graph always reaches `END`. `run_analysis()` sets the run's final status to `"done"` if no agent recorded an error, or `"done_with_errors"` if one did, so a partial/degraded result is still returned to the frontend rather than a failed request.
+Orchestration is a [LangGraph](https://github.com/langchain-ai/langgraph) `StateGraph` (`backend/app/orchestrator/graph.py`) over a single shared `AnalysisState` dict. Every node is wrapped so an agent's exception is caught, logged, and appended to `state["errors"]` instead of raising — the graph always reaches `END`. `run_analysis()` sets the run's final status to `"done"` if no agent recorded an error, or `"done_with_errors"` if one did, so a partial/degraded result is still returned to the frontend rather than a failed request.
 
 ## 🤖 The Agents
 
 | Agent | What it does | LLM or computation |
 |---|---|---|
-| **Planner** | Classifies the dataset's domain (`sales`/`finance`/`complaints`/`tourism`/`generic`) and whether it has a time series, from the upload profile | LLM (Gemini), retry-once + safe-default fallback |
-| **Data Quality** | Computes % missing per column, duplicate rows, numeric-values-stored-as-text detection, and IQR outliers per numeric column; rolls them into a weighted 0–100 score | Pure pandas/numpy — LLM only writes the 2–3 sentence human-readable summary of the already-computed stats |
-| **EDA** | Computes distributions (`describe()`), correlations, monthly trends with incomplete-period flagging, and top-5 category breakdowns | Pure pandas, no LLM |
-| **KPI** | Builds a domain-specific set of KPIs (different metrics per domain) from the EDA/quality output | Pure Python, no LLM |
-| **Insight** | Writes 3–6 causal, business-oriented insights (with explicit few-shot good/bad examples) grounded in the real computed numbers | LLM (Gemini), retry-once + template-based fallback built directly from the stats |
-| **Visualization** | Picks a chart type per data shape (line for trends, pie/bar for categoricals depending on cardinality, heatmap for correlations) and builds the ECharts option | Pure Python, no LLM |
+| **Planner** | Classifies dataset domain, decides which agents run | LLM |
+| **Data Quality** | Missing values, duplicates, outliers → 0–100 score | Pure pandas |
+| **Cleaning** | Dedupes, imputes missing values, flags outliers | Pure pandas |
+| **EDA** | Distributions, correlations, monthly trends | Pure pandas |
+| **Forecast** | Short-horizon trend projection when enough data exists | statsmodels |
+| **KPI** | Domain-specific metrics (revenue, complaints, etc.) | Pure Python |
+| **Insight** | 3–6 causal business insights from the stats | LLM |
+| **Visualization** | Picks chart type, builds ECharts config | Pure Python |
+| **Report** | Executive summary + downloadable PDF | LLM summary + PDF export |
+| **Reviewer** | Sanity-checks KPIs/insights, can trigger one re-run | Pure Python |
 
 ## 🛠️ Tech Stack
 
 **Frontend** — Next.js 14 (App Router) · TypeScript · Tailwind CSS · shadcn/ui (base-ui) · ECharts · GSAP (motion) · lucide-react
 
-**Backend** — FastAPI · SQLAlchemy · Alembic · Pydantic / pydantic-settings · Pandas · DuckDB *(installed, reserved for heavier aggregation — current agents run entirely on pandas)*
+**Backend** — FastAPI · SQLAlchemy · Alembic · Pydantic / pydantic-settings · Pandas · statsmodels · ReportLab · DuckDB *(installed, reserved for heavier aggregation — current agents run entirely on pandas)*
 
 **AI / Orchestration** — LangGraph · Google Gemini (`google-genai`, model `gemini-3.1-flash-lite`)
 
@@ -71,7 +80,7 @@ Orchestration is a linear [LangGraph](https://github.com/langchain-ai/langgraph)
 ### 1. Clone and configure environment
 
 ```bash
-git clone git clone https://github.com/Elham6316/insightflow-ai.git
+git clone https://github.com/Elham6316/insightflow-ai.git
 cd insightflow-ai
 cp .env.example backend/.env
 ```
@@ -109,9 +118,6 @@ Open `http://localhost:3000`, upload a `.csv`/`.xlsx` file, and run an analysis.
 
 ![InsightFlow AI — Upload and Dashboard](docs/screenshots/preview.png)
 
-
-*(placeholder — screenshots to be added)*
-
 ## 🧠 How It Works
 
 Every agent reads from and writes to a single shared `AnalysisState` dict as it passes through the LangGraph pipeline. There's no hidden coupling between agents — each one declares in `backend/app/orchestrator/state.py` exactly which keys it reads and writes, so the whole pipeline's data flow is visible in one file.
@@ -122,10 +128,6 @@ The pipeline also draws a hard line between deterministic computation and LLM re
 
 ## 🗺️ Roadmap
 
-- **Cleaning Agent** — propose and apply data-cleaning fixes (not just report on quality)
-- **Forecast Agent** — short-horizon forecasting for time-series datasets
-- **Report Agent** — export a shareable PDF/summary report of a run
-- **Reviewer Agent** — a conditional routing node that re-runs or escalates when confidence is low
 - **Docker deployment** — containerized backend + frontend for one-command local/prod setup
 
 ## 📝 Development Log
